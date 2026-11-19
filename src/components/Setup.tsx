@@ -10,6 +10,19 @@ import {
   pickGroqChatModel,
   pickWhisperModel,
 } from '../lib/llm'
+import {
+  LOCAL_MODELS,
+  checkWebGpu,
+  deleteModel,
+  isModelDownloaded,
+  loadBrain,
+  localJson,
+  recommendedModel,
+  resolveModelId,
+  useBrainProgress,
+  type GpuStatus,
+  type LocalModel,
+} from '../lib/local'
 import { GEMINI_VOICES, LANG_NAME, loadVoices, speak, ttsAvailable, unlockAudio, voicesFor } from '../lib/speech'
 import { saveSettings, type Settings } from '../lib/store'
 import { Segmented, Spinner } from './ui'
@@ -102,12 +115,12 @@ export function KeySetup({ settings, compact = false }: { settings: Settings; co
   return (
     <div className="stack">
       {!compact && (
-        <p>
-          Rani runs on <strong>Google Gemini</strong> — it listens to you, thinks, and speaks. Open{' '}
+        <p className="hint">
+          A free Gemini key makes Rani faster and her grammar corrections more accurate. Open{' '}
           <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
             aistudio.google.com/apikey
           </a>
-          , sign in with Google, tap <em>Create API key</em>, copy it and paste it below. It's free.
+          , sign in with your Google account, tap <em>Create API key</em>, and paste it below.
         </p>
       )}
       <KeyField
@@ -203,10 +216,10 @@ function PhoneVoices({ settings, langs }: { settings: Settings; langs: Lang[] })
         const key = lang === 'hi' ? 'voiceHi' : 'voiceMr'
         return (
           <div className="field" key={lang}>
-            <label className="field-label">Backup phone voice — {LANG_NAME[lang]}</label>
+            <label className="field-label">Phone voice — {LANG_NAME[lang]}</label>
             {list.length === 0 ? (
               <p className="hint">
-                Optional. No {LANG_NAME[lang]} voice on this phone yet — to install: <em>Settings → System → Languages → Text-to-speech output →</em> ⚙ next to{' '}
+                No {LANG_NAME[lang]} voice found yet. To install: <em>Settings → System → Languages → Text-to-speech output →</em> ⚙ next to{' '}
                 <em>Speech Services by Google</em> → <em>Install voice data</em> → {LANG_NAME[lang]} (India).
               </p>
             ) : (
@@ -244,6 +257,7 @@ export function VoiceSetup({ settings, langs = ['hi', 'mr'] }: { settings: Setti
   }
   return (
     <div className="stack">
+      {settings.geminiKey && (
       <div className="field">
         <span className="field-label">Rani speaks with</span>
         <Segmented
@@ -251,12 +265,13 @@ export function VoiceSetup({ settings, langs = ['hi', 'mr'] }: { settings: Setti
           value={settings.ttsEngine}
           onChange={(v) => saveSettings({ ttsEngine: v })}
           options={[
-            { value: 'gemini', label: 'Gemini voice' },
             { value: 'browser', label: 'Phone voice' },
+            { value: 'gemini', label: 'Gemini voice' },
           ]}
         />
       </div>
-      {settings.ttsEngine === 'gemini' && (
+      )}
+      {settings.ttsEngine === 'gemini' && settings.geminiKey && (
         <div className="field">
           <label className="field-label">Rani's Gemini voice</label>
           <div className="key-row">
@@ -288,6 +303,152 @@ export function VoiceSetup({ settings, langs = ['hi', 'mr'] }: { settings: Setti
           onChange={(e) => saveSettings({ speechRate: Number(e.target.value) })}
         />
       </div>
+    </div>
+  )
+}
+
+/** Choose, download, test and delete Rani's on-phone AI model. */
+export function BrainSetup({ settings }: { settings: Settings }) {
+  const [gpu, setGpu] = useState<GpuStatus | null>(null)
+  const [choice, setChoice] = useState('')
+  const [have, setHave] = useState<Record<string, boolean>>({})
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const [test, setTest] = useState('')
+  const progress = useBrainProgress()
+
+  const refresh = async (g: GpuStatus) => {
+    const entries = await Promise.all(
+      LOCAL_MODELS.map(async (m) => {
+        const id = resolveModelId(m, g.f16)
+        return [m.base, id ? await isModelDownloaded(id) : false] as const
+      }),
+    )
+    setHave(Object.fromEntries(entries))
+  }
+
+  useEffect(() => {
+    void checkWebGpu().then((g) => {
+      setGpu(g)
+      if (g.ok) void refresh(g)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (choice) return
+    const current = LOCAL_MODELS.find((m) => m.base === settings.localModel || m.f32 === settings.localModel)
+    setChoice((current ?? recommendedModel()).base)
+  }, [settings.localModel, choice])
+
+  if (!gpu) return <Spinner label="Checking what your phone can run…" />
+  if (!gpu.ok) return <p className="error-text">{gpu.reason}</p>
+
+  const models = LOCAL_MODELS.filter((m) => resolveModelId(m, gpu.f16))
+  const chosen = models.find((m) => m.base === choice) ?? models[0]
+  const chosenId = resolveModelId(chosen, gpu.f16)!
+  const active = settings.localModelReady && settings.localModel === chosenId
+  const rec = recommendedModel().base
+
+  const download = async () => {
+    setBusy(true)
+    setErr('')
+    setTest('')
+    try {
+      await navigator.storage?.persist?.().catch(() => false)
+      await loadBrain(chosenId)
+      await saveSettings({ localModel: chosenId, localModelReady: true, llmPrimary: 'local' })
+      await refresh(gpu)
+    } catch (e) {
+      setErr((e as Error).message)
+    }
+    setBusy(false)
+  }
+
+  const runTest = async () => {
+    setBusy(true)
+    setErr('')
+    setTest('')
+    const t0 = performance.now()
+    try {
+      const out = await localJson<{ reply: string }>(
+        {
+          system: 'You are Rani, a friendly Hindi tutor. Reply ONLY with JSON like {"reply": "..."}.',
+          messages: [{ role: 'user', text: 'Greet the learner warmly in one short Hindi sentence.' }],
+          schema: { type: 'OBJECT', properties: { reply: { type: 'STRING' } }, required: ['reply'] },
+          maxTokens: 60,
+        },
+        chosenId,
+      )
+      setTest(`“${out.reply}” — answered in ${((performance.now() - t0) / 1000).toFixed(1)} s`)
+    } catch (e) {
+      setErr((e as Error).message)
+    }
+    setBusy(false)
+  }
+
+  const remove = async (m: LocalModel) => {
+    const id = resolveModelId(m, gpu.f16)!
+    if (!confirm(`Delete ${m.label} from this phone?`)) return
+    await deleteModel(id)
+    if (settings.localModel === id) await saveSettings({ localModelReady: false })
+    await refresh(gpu)
+  }
+
+  return (
+    <div className="stack">
+      <div className="model-list" role="radiogroup" aria-label="On-phone AI model">
+        {models.map((m) => (
+          <label key={m.base} className={'model-option' + (choice === m.base ? ' on' : '')}>
+            <input type="radio" name="brain-model" checked={choice === m.base} disabled={busy} onChange={() => setChoice(m.base)} />
+            <span className="model-text">
+              <span>
+                <strong>{m.label}</strong>
+                {m.base === rec && <span className="tag">Recommended</span>}
+                {have[m.base] && <span className="tag good">On phone</span>}
+              </span>
+              <small>
+                {m.size} · {m.note}
+              </small>
+            </span>
+            {have[m.base] && !busy && (
+              <button
+                type="button"
+                className="link-btn"
+                onClick={(e) => {
+                  e.preventDefault()
+                  void remove(m)
+                }}
+              >
+                Delete
+              </button>
+            )}
+          </label>
+        ))}
+      </div>
+      {progress && (
+        <div className="dl" role="status">
+          <progress max={1} value={progress.progress} />
+          <small className="muted">{progress.text}</small>
+        </div>
+      )}
+      {active ? (
+        <div className="button-row center-row">
+          <span className="ok-text">✓ {chosen.label} is Rani's brain</span>
+          <button type="button" className="btn small" disabled={busy} onClick={runTest}>
+            {busy ? <Spinner /> : 'Test'}
+          </button>
+        </div>
+      ) : (
+        <button type="button" className="btn primary" disabled={busy} onClick={download}>
+          {busy ? <Spinner label="Setting up…" /> : have[chosen.base] ? `Use ${chosen.label}` : `Download ${chosen.label} (${chosen.size})`}
+        </button>
+      )}
+      {test && <p className="ok-text">{test}</p>}
+      {err && <p className="error-text">{err}</p>}
+      <p className="hint">
+        One-time download — use Wi-Fi and keep Rani open until it finishes. After that it works with no account. Loading the brain takes a few
+        seconds each time the app starts.
+      </p>
     </div>
   )
 }

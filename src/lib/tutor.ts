@@ -1,16 +1,23 @@
 import { db, type Card, type Correction, type Evidence, type PlacementResult, type Recap, type Session } from '../db'
-import { generateJson, type ChatMsg } from './llm'
+import { generateJson, type ChatMsg, type JsonRequest } from './llm'
 import {
   ASSESSMENT_SCHEMA,
+  LOCAL_ASSESSMENT_SCHEMA,
+  LOCAL_RECAP_SCHEMA,
+  LOCAL_TURN_SCHEMA,
   RECAP_SCHEMA,
   TURN_SCHEMA,
   assessmentSystem,
+  assessmentSystemLocal,
   placementSystem,
+  placementSystemLocal,
   practiceSystem,
+  practiceSystemLocal,
   recapSystem,
+  recapSystemLocal,
 } from './prompts'
 import { HINDI_SKILLS, SKILL_BY_ID, applyEvidence, clampScore } from './skills'
-import { getProfile, getSettings, updateProfile, type Settings } from './store'
+import { getProfile, getSettings, updateProfile, type Profile, type Settings } from './store'
 
 export interface TurnResult {
   reply: string
@@ -30,9 +37,31 @@ interface RawTurn {
   placement_complete?: boolean
 }
 
-function toMessages(session: Session): ChatMsg[] {
+/** Placement always ends between learner answers 8 and 12, whatever the model says. */
+export const PLACEMENT_MIN = 8
+export const PLACEMENT_MAX = 12
+
+/**
+ * Conversation history for the model. The on-phone model has a small memory,
+ * so it sees a sliding window of recent turns; the window start only moves
+ * every 8 turns so most turns can reuse what the model already processed.
+ */
+export function toMessages(session: Session, windowed = false): ChatMsg[] {
   const start = session.kind === 'placement' ? '[Placement start]' : '[Session start]'
-  return [{ role: 'user', text: start }, ...session.turns.map((t) => ({ role: t.role === 'user' ? 'user' : 'model', text: t.text }) as ChatMsg)]
+  let turns = session.turns
+  if (windowed && turns.length > 16) {
+    const from = Math.floor((turns.length - 8) / 8) * 8 // even index → a Rani turn, keeps user/model alternation
+    turns = turns.slice(from)
+  }
+  return [{ role: 'user', text: start }, ...turns.map((t) => ({ role: t.role === 'user' ? 'user' : 'model', text: t.text }) as ChatMsg)]
+}
+
+/** The profile as it was when the session began, so the prompt stays identical across turns. */
+function sessionProfile(p: Profile, session: Session): Profile {
+  if (!session.skillsBefore) return p
+  const skills = { ...p.skills }
+  for (const [k, score] of Object.entries(session.skillsBefore)) if (skills[k]) skills[k] = { ...skills[k], score }
+  return { ...p, skills }
 }
 
 export function normalizeTurn(raw: RawTurn): TurnResult {
@@ -50,6 +79,8 @@ export function normalizeTurn(raw: RawTurn): TurnResult {
   const evidence = (raw.evidence ?? [])
     .filter((e): e is Evidence => !!e.skill && !!SKILL_BY_ID[e.skill] && typeof e.correct === 'boolean')
     .slice(0, 6)
+  // The on-phone model doesn't label the correction's skill; take it from its evidence.
+  if (correction && !correction.skill) correction.skill = evidence.find((e) => !e.correct)?.skill
   // A correction always counts as a miss for its skill, even if the model forgot the evidence.
   if (correction?.skill && !evidence.some((e) => e.skill === correction.skill && !e.correct)) {
     evidence.push({ skill: correction.skill, correct: false })
@@ -66,14 +97,25 @@ export function normalizeTurn(raw: RawTurn): TurnResult {
 
 /** Ask Rani for her next turn given the session so far. */
 export async function runTurn(session: Session, s: Settings): Promise<TurnResult> {
-  const profile = await getProfile(session.lang)
+  const profile = sessionProfile(await getProfile(session.lang), session)
   const learnerMsgs = session.turns.filter((t) => t.role === 'user').length
-  const system =
-    session.kind === 'placement'
-      ? placementSystem(s, learnerMsgs)
-      : practiceSystem(s, profile, session.focus ?? HINDI_SKILLS[0].id, session.topic)
-  const { data } = await generateJson<RawTurn>({ system, messages: toMessages(session), schema: TURN_SCHEMA, temperature: 0.7 }, s)
-  return normalizeTurn(data)
+  const focus = session.focus ?? HINDI_SKILLS[0].id
+  const { data, provider } = await generateJson<RawTurn>((p): JsonRequest => {
+    if (p === 'local') {
+      const system = session.kind === 'placement' ? placementSystemLocal(s) : practiceSystemLocal(s, profile, focus, session.topic)
+      return { system, messages: toMessages(session, true), schema: LOCAL_TURN_SCHEMA, temperature: 0.6, maxTokens: 320 }
+    }
+    const system = session.kind === 'placement' ? placementSystem(s, learnerMsgs) : practiceSystem(s, profile, focus, session.topic)
+    return { system, messages: toMessages(session), schema: TURN_SCHEMA, temperature: 0.7 }
+  }, s)
+  const turn = normalizeTurn(data)
+  if (session.kind === 'placement') {
+    const modelSaysDone = provider !== 'local' && turn.placementComplete
+    turn.placementComplete = (modelSaysDone && learnerMsgs >= PLACEMENT_MIN) || learnerMsgs >= (provider === 'local' ? 10 : PLACEMENT_MAX)
+  } else {
+    turn.placementComplete = false
+  }
+  return turn
 }
 
 /** Apply per-turn skill evidence to the learner profile (practice sessions only). */
@@ -108,8 +150,12 @@ export async function finishPractice(sessionId: number): Promise<Session> {
   if (!session) throw new Error('Session not found')
   const s = await getSettings()
   const profile = await getProfile(session.lang)
+  const messages: ChatMsg[] = [{ role: 'user', text: transcript(session) }]
   const { data } = await generateJson<RawRecap>(
-    { system: recapSystem(s, profile), messages: [{ role: 'user', text: transcript(session) }], schema: RECAP_SCHEMA, temperature: 0.4 },
+    (p) =>
+      p === 'local'
+        ? { system: recapSystemLocal(s, profile), messages, schema: LOCAL_RECAP_SCHEMA, temperature: 0.3, maxTokens: 700 }
+        : { system: recapSystem(s, profile), messages, schema: RECAP_SCHEMA, temperature: 0.4 },
     s,
   )
   const recap: Recap = {
@@ -153,8 +199,12 @@ export async function finishPlacement(sessionId: number): Promise<Session> {
   const session = await db.sessions.get(sessionId)
   if (!session) throw new Error('Session not found')
   const s = await getSettings()
+  const messages: ChatMsg[] = [{ role: 'user', text: transcript(session) }]
   const { data } = await generateJson<RawAssessment>(
-    { system: assessmentSystem(s), messages: [{ role: 'user', text: transcript(session) }], schema: ASSESSMENT_SCHEMA, temperature: 0.2 },
+    (p) =>
+      p === 'local'
+        ? { system: assessmentSystemLocal(s), messages, schema: LOCAL_ASSESSMENT_SCHEMA, temperature: 0.2, maxTokens: 800 }
+        : { system: assessmentSystem(s), messages, schema: ASSESSMENT_SCHEMA, temperature: 0.2 },
     s,
   )
   const byId = new Map((data.skills ?? []).filter((x) => SKILL_BY_ID[x.skill]).map((x) => [x.skill, x]))
@@ -162,7 +212,7 @@ export async function finishPlacement(sessionId: number): Promise<Session> {
     skills: HINDI_SKILLS.map((sk) => ({
       skill: sk.id,
       score: clampScore(byId.get(sk.id)?.score ?? 30),
-      comment: byId.get(sk.id)?.comment ?? 'Estimated',
+      comment: byId.has(sk.id) ? (byId.get(sk.id)!.comment ?? '') : 'Estimated',
     })),
     strengths: data.strengths ?? [],
     weaknesses: data.weaknesses ?? [],

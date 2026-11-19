@@ -17,9 +17,10 @@ export class NoSpeechError extends Error {}
 
 /** Which engine will actually be used given the keys that exist. */
 export function effectiveStt(s: Settings): SttEngine {
+  if (s.sttEngine === 'browser' && browserRecognitionAvailable()) return 'browser'
   if (s.sttEngine === 'gemini' && s.geminiKey) return 'gemini'
   if (s.sttEngine === 'groq' && s.groqKey) return 'groq'
-  if (s.sttEngine === 'browser' && browserRecognitionAvailable()) return 'browser'
+  if (browserRecognitionAvailable()) return 'browser'
   if (s.geminiKey) return 'gemini'
   if (s.groqKey) return 'groq'
   return 'browser'
@@ -175,6 +176,8 @@ export function browserRecognitionAvailable(): boolean {
   return !!recognitionCtor()
 }
 
+const IS_ANDROID = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
+
 function startBrowserRecognition(lang: Lang): Promise<Listening> {
   const Ctor = recognitionCtor()
   if (!Ctor) return Promise.reject(new ApiError('mic', "This phone's speech recognition is not available. Add a Groq key in Settings."))
@@ -189,14 +192,18 @@ function startBrowserRecognition(lang: Lang): Promise<Listening> {
     rec = new Ctor()
     rec.lang = LANG_TAG[lang]
     rec.interimResults = true
-    rec.continuous = true
+    // Android Chrome repeats earlier phrases in continuous mode; there we listen
+    // phrase by phrase and restart after each pause instead.
+    rec.continuous = !IS_ANDROID
     rec.maxAlternatives = 1
     rec.onresult = (e: AnyRecognition) => {
       interim = ''
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i]
-        if (r.isFinal) finals.push(r[0].transcript)
-        else interim += r[0].transcript
+        const text = String(r[0].transcript).trim()
+        if (r.isFinal) {
+          if (text && finals.at(-1) !== text) finals.push(text)
+        } else interim += text
       }
     }
     rec.onerror = (e: AnyRecognition) => {

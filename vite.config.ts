@@ -10,6 +10,8 @@ const base = process.env.BASE_PATH || '/'
 
 export default defineConfig({
   base,
+  worker: { format: 'es' },
+  build: { chunkSizeWarningLimit: 7000 },
   define: { __APP_VERSION__: JSON.stringify(pkg.version) },
   plugins: [
     react(),
@@ -33,6 +35,15 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'],
+        // The on-phone AI runtime (~6 MB) is cached the first time it is used, not at install.
+        globIgnores: ['**/lib-*.js', '**/brain.worker-*.js'],
+        runtimeCaching: [
+          {
+            urlPattern: /\/assets\/(lib|brain\.worker)-[\w-]+\.js$/,
+            handler: 'CacheFirst',
+            options: { cacheName: 'rani-ai-runtime', expiration: { maxEntries: 6 } },
+          },
+        ],
       },
     }),
   ],

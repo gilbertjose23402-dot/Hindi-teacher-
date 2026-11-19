@@ -5,7 +5,7 @@ import { defaultSkills, type SkillState } from './skills'
 
 export type SttEngine = 'groq' | 'gemini' | 'browser'
 export type TtsEngine = 'gemini' | 'browser'
-export type LlmProvider = 'gemini' | 'groq'
+export type LlmProvider = 'local' | 'gemini' | 'groq'
 
 export interface Settings {
   onboarded: boolean
@@ -18,6 +18,9 @@ export interface Settings {
   groqModel: string
   whisperModel: string
   llmPrimary: LlmProvider
+  /** WebLLM model id of the on-phone brain ('' until one is downloaded). */
+  localModel: string
+  localModelReady: boolean
   sttEngine: SttEngine
   ttsEngine: TtsEngine
   geminiTtsModel: string
@@ -33,7 +36,7 @@ export interface Settings {
   settingsVersion: number
 }
 
-const SETTINGS_VERSION = 2
+const SETTINGS_VERSION = 3
 
 export const DEFAULT_SETTINGS: Settings = {
   onboarded: false,
@@ -44,9 +47,11 @@ export const DEFAULT_SETTINGS: Settings = {
   geminiModel: 'gemini-2.5-flash',
   groqModel: 'llama-3.3-70b-versatile',
   whisperModel: 'whisper-large-v3',
-  llmPrimary: 'gemini',
-  sttEngine: 'gemini',
-  ttsEngine: 'gemini',
+  llmPrimary: 'local',
+  localModel: '',
+  localModelReady: false,
+  sttEngine: 'browser',
+  ttsEngine: 'browser',
   geminiTtsModel: 'gemini-2.5-flash-preview-tts',
   geminiVoice: 'Kore',
   voiceHi: '',
@@ -88,8 +93,9 @@ export function defaultProfile(lang: Lang): Profile {
 export async function getSettings(): Promise<Settings> {
   const row = await db.kv.get('settings')
   const stored = (row?.value as Partial<Settings>) ?? {}
-  // v2: Gemini does speech recognition, the tutor and the voice by default; Groq is optional.
-  const migrated: Partial<Settings> = (stored.settingsVersion ?? 1) < 2 ? { sttEngine: 'gemini', ttsEngine: 'gemini', settingsVersion: SETTINGS_VERSION } : {}
+  // v3: the phone does listening, speaking and the AI brain by default; Gemini and Groq are optional.
+  const migrated: Partial<Settings> =
+    (stored.settingsVersion ?? 1) < 3 ? { sttEngine: 'browser', ttsEngine: 'browser', llmPrimary: 'local', settingsVersion: SETTINGS_VERSION } : {}
   return { ...DEFAULT_SETTINGS, ...stored, ...migrated }
 }
 

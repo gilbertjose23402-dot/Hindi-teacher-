@@ -1,10 +1,11 @@
 import { useRef, useState } from 'react'
-import { KeySetup, VoiceSetup } from '../components/Setup'
+import { BrainSetup, KeySetup, VoiceSetup } from '../components/Setup'
 import { Segmented, Toggle } from '../components/ui'
 import { downloadBlob, exportBackup, importBackup, wipeAll } from '../lib/backup'
 import { dayKey } from '../lib/dates'
 import { browserRecognitionAvailable } from '../lib/speech'
-import { saveSettings, type Settings as S } from '../lib/store'
+import { PROVIDER_NAME, providerAvailable } from '../lib/llm'
+import { saveSettings, type LlmProvider, type Settings as S } from '../lib/store'
 
 export default function Settings({ settings }: { settings: S }) {
   const [includeKeys, setIncludeKeys] = useState(false)
@@ -65,38 +66,44 @@ export default function Settings({ settings }: { settings: S }) {
       </section>
 
       <section className="card stack">
-        <h2>AI keys &amp; models</h2>
-        <KeySetup settings={settings} compact />
+        <h2>Rani's brain</h2>
         <div className="field">
-          <span className="field-label">Rani's main brain</span>
+          <span className="field-label">Main brain</span>
           <Segmented
-            label="Main AI"
+            label="Main brain"
             value={settings.llmPrimary}
             onChange={(v) => saveSettings({ llmPrimary: v })}
-            options={[
-              { value: 'gemini', label: 'Gemini' },
-              { value: 'groq', label: 'Groq' },
-            ]}
+            options={(['local', 'gemini', 'groq'] as LlmProvider[])
+              .filter((p) => p === 'local' || p === settings.llmPrimary || providerAvailable(settings, p))
+              .map((p) => ({ value: p, label: p === 'local' ? 'On phone' : PROVIDER_NAME[p] }))}
           />
-          <p className="hint">If the main one hits its free limit, Rani automatically switches to the other (when its key is set).</p>
+          <p className="hint">If the main brain fails, Rani automatically tries the others you've set up.</p>
         </div>
-        <div className="field">
-          <span className="field-label">Speech recognition</span>
-          <Segmented
-            label="Speech recognition"
-            value={settings.sttEngine}
-            onChange={(v) => saveSettings({ sttEngine: v })}
-            options={[
-              { value: 'gemini', label: 'Gemini' },
-              { value: 'groq', label: 'Groq' },
-              ...(browserRecognitionAvailable() ? [{ value: 'browser' as const, label: 'Phone' }] : []),
-            ]}
-          />
-          <p className="hint">
-            Gemini (default) writes down exactly what you said, mistakes included. Groq needs the optional key. "Phone" uses Android's built-in
-            recogniser, which tends to auto-correct your grammar and hide mistakes.
-          </p>
-        </div>
+        <BrainSetup settings={settings} />
+      </section>
+
+      <section className="card stack">
+        <h2>Speech recognition</h2>
+        <Segmented
+          label="Speech recognition"
+          value={settings.sttEngine}
+          onChange={(v) => saveSettings({ sttEngine: v })}
+          options={[
+            ...(browserRecognitionAvailable() ? [{ value: 'browser' as const, label: 'Phone' }] : []),
+            ...(settings.geminiKey || settings.sttEngine === 'gemini' ? [{ value: 'gemini' as const, label: 'Gemini' }] : []),
+            ...(settings.groqKey || settings.sttEngine === 'groq' ? [{ value: 'groq' as const, label: 'Groq' }] : []),
+          ]}
+        />
+        <p className="hint">
+          "Phone" (default) uses Android's built-in recogniser — free, no account. It sometimes auto-corrects small grammar slips, so a few
+          mistakes may go unnoticed. With a Gemini or Groq key you can switch to a recogniser that keeps your words exactly as spoken.
+        </p>
+      </section>
+
+      <section className="card stack">
+        <h2>Optional cloud AI</h2>
+        <p className="hint">Not needed. Add a free key for faster replies and more accurate corrections.</p>
+        <KeySetup settings={settings} compact />
       </section>
 
       <section className="card stack">

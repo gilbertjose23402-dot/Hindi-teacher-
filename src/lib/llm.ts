@@ -1,3 +1,4 @@
+import { localJson } from './local'
 import type { LlmProvider, Settings } from './store'
 
 /** Subset of the Gemini/OpenAPI schema format, also shown to Groq as text. */
@@ -22,7 +23,12 @@ export interface JsonRequest {
   messages: ChatMsg[]
   schema: Schema
   temperature?: number
+  /** Output token cap (used by the on-phone model). */
+  maxTokens?: number
 }
+
+/** A request, or a function building one per provider (the on-phone model gets shorter prompts). */
+export type JsonRequestSource = JsonRequest | ((provider: LlmProvider) => JsonRequest)
 
 export class ApiError extends Error {
   status?: number
@@ -137,26 +143,36 @@ async function groqJson<T>(req: JsonRequest, key: string, model: string): Promis
   return parseJsonLoose<T>(text)
 }
 
-function available(s: Settings, p: LlmProvider): boolean {
+export function providerAvailable(s: Settings, p: LlmProvider): boolean {
+  if (p === 'local') return s.localModelReady && !!s.localModel
   return p === 'gemini' ? !!s.geminiKey : !!s.groqKey
 }
 
 export function hasLlm(s: Settings): boolean {
-  return available(s, 'gemini') || available(s, 'groq')
+  return providerAvailable(s, 'local') || providerAvailable(s, 'gemini') || providerAvailable(s, 'groq')
 }
 
+export const PROVIDER_NAME: Record<LlmProvider, string> = { local: 'On-phone AI', gemini: 'Gemini', groq: 'Groq' }
+
 /**
- * Ask the primary provider for JSON; on rate limits/outages fall back to the
- * other provider when its key is set.
+ * Ask the primary brain for JSON; if it fails, try the other configured ones
+ * (on-phone model, Gemini, Groq — whichever are set up).
  */
-export async function generateJson<T>(req: JsonRequest, s: Settings): Promise<{ data: T; provider: LlmProvider }> {
-  const order: LlmProvider[] = s.llmPrimary === 'groq' ? ['groq', 'gemini'] : ['gemini', 'groq']
-  const usable = order.filter((p) => available(s, p))
-  if (usable.length === 0) throw new ApiError('none', 'Add a Gemini or Groq API key in Settings first.')
+export async function generateJson<T>(source: JsonRequestSource, s: Settings): Promise<{ data: T; provider: LlmProvider }> {
+  const all: LlmProvider[] = ['local', 'gemini', 'groq']
+  const order = [s.llmPrimary, ...all.filter((p) => p !== s.llmPrimary)]
+  const usable = order.filter((p) => providerAvailable(s, p))
+  if (usable.length === 0) throw new ApiError('none', "Rani's brain isn't set up yet. Download it in Settings → Rani's brain (or add a Gemini key).")
   let lastErr: unknown
   for (const p of usable) {
+    const req = typeof source === 'function' ? source(p) : source
     try {
-      const data = p === 'gemini' ? await geminiJson<T>(req, s.geminiKey, s.geminiModel) : await groqJson<T>(req, s.groqKey, s.groqModel)
+      const data =
+        p === 'local'
+          ? await localJson<T>(req, s.localModel)
+          : p === 'gemini'
+            ? await geminiJson<T>(req, s.geminiKey, s.geminiModel)
+            : await groqJson<T>(req, s.groqKey, s.groqModel)
       return { data, provider: p }
     } catch (e) {
       lastErr = e

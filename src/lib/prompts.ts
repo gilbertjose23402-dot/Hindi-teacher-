@@ -237,3 +237,133 @@ export const ASSESSMENT_SCHEMA: Schema = {
   required: ['skills', 'strengths', 'weaknesses', 'summary', 'listening', 'tutor_notes'],
   propertyOrdering: ['skills', 'strengths', 'weaknesses', 'summary', 'listening', 'tutor_notes'],
 }
+
+// ---------------------------------------------------------------------------
+// Compact prompts for the on-phone model (small Gemma). Short, concrete, with
+// one worked example. They must not change between turns of a session so the
+// model can reuse what it already processed.
+// ---------------------------------------------------------------------------
+
+function learnerLine(s: Settings): string {
+  const fem = s.learnerGender === 'f'
+  return `The learner, ${s.learnerName || 'the learner'}, is a Malayalam speaker and junior criminal lawyer in Pune. They know many Hindi words but make grammar mistakes. When talking about themselves they must use ${fem ? 'feminine' : 'masculine'} forms (${fem ? 'मैं गई, मैं करती हूँ' : 'मैं गया, मैं करता हूँ'}). Speak to them politely with आप.`
+}
+
+function localExample(s: Settings): string {
+  const fem = s.learnerGender === 'f'
+  const went = fem ? 'गई' : 'गया'
+  const youWent = fem ? 'गईं' : 'गए'
+  return `Example — learner says: कल मैंने बाज़ार ${went}।
+{"correction":{"needed":true,"you_said":"कल मैंने बाज़ार ${went}।","better":"कल मैं बाज़ार ${went}।","rule":"जाना is intransitive, so the subject does not take ने."},"evidence":[{"skill":"ne_construction","correct":false}],"reply":"अच्छा, आप कल बाज़ार ${youWent}! आपने वहाँ क्या ख़रीदा?","reply_english":"Oh, you went to the market yesterday! What did you buy there?","placement_complete":false}`
+}
+
+const LOCAL_TURN_RULES = (skillIds: string) => `Reply ONLY with JSON:
+- "correction": look at the learner's LAST message. If it has a Hindi grammar mistake: needed=true, you_said = their sentence, better = the corrected Hindi sentence, rule = ONE short English sentence explaining why. If it is correct, or it is "[Session start]": needed=false and "" for the others. Ignore spelling and punctuation.
+- "evidence": grammar skills the learner used in that message, like [{"skill":"present_tense","correct":true}]. Skill ids: ${skillIds}. Use [] if unsure.
+- "reply": your next message as Rani in simple, natural Hindi (Devanagari only), 1–2 short sentences, ending with a question. If there was a mistake, use the correct form naturally in your reply.
+- "reply_english": English translation of reply.
+- "placement_complete": false.`
+
+export function practiceSystemLocal(s: Settings, p: Profile, focusId: string, topicId: string): string {
+  const focus = SKILL_BY_ID[focusId]
+  const topic = TOPIC_BY_ID[topicId] ?? TOPICS[0]
+  const notes = p.tutorNotes ? `\nYour notes about the learner: ${p.tutorNotes.slice(0, 300)}` : ''
+  return `You are Rani (रानी), a warm, friendly female Hindi tutor in a voice chat. ${learnerLine(s)}${notes}
+Today's topic: ${topic.label}. Grammar focus: ${focus.name} (${focus.example}) — ask questions whose answers need this grammar.
+On "[Session start]", greet the learner by name and ask a first question about the topic.
+
+${LOCAL_TURN_RULES(SKILL_IDS.join(', '))}
+
+${localExample(s)}`
+}
+
+export function placementSystemLocal(s: Settings): string {
+  return `You are Rani (रानी), a warm, friendly female Hindi tutor. This is a short placement chat to find the learner's Hindi grammar level. ${learnerLine(s)}
+On "[Placement start]", greet them by name and ask them to introduce themselves. Then ask ONE question per turn, a little harder each time, in this order: daily routine at court; what they did yesterday; what they are working on these days; plans for next week; things they like or need; advice for a new lawyer; a memorable case; "if you were a judge, what would you change?"; then ask them to translate "The judge had already given the order before I reached court." into Hindi.
+
+${LOCAL_TURN_RULES(SKILL_IDS.join(', '))}
+
+${localExample(s)}`
+}
+
+export const LOCAL_TURN_SCHEMA: Schema = {
+  type: 'OBJECT',
+  properties: {
+    correction: {
+      type: 'OBJECT',
+      properties: { needed: { type: 'BOOLEAN' }, you_said: { type: 'STRING' }, better: { type: 'STRING' }, rule: { type: 'STRING' } },
+      required: ['needed', 'you_said', 'better', 'rule'],
+    },
+    evidence: {
+      type: 'ARRAY',
+      items: { type: 'OBJECT', properties: { skill: { type: 'STRING', enum: SKILL_IDS }, correct: { type: 'BOOLEAN' } }, required: ['skill', 'correct'] },
+    },
+    reply: { type: 'STRING' },
+    reply_english: { type: 'STRING' },
+    placement_complete: { type: 'BOOLEAN' },
+  },
+  required: ['correction', 'evidence', 'reply', 'reply_english', 'placement_complete'],
+}
+
+export function recapSystemLocal(s: Settings, p: Profile): string {
+  return `You are Rani, a Hindi tutor. Below is today's conversation with your learner, with the corrections shown. ${learnerLine(s)}
+Your notes so far: ${p.tutorNotes || '(none)'}
+Skill ids: ${SKILL_IDS.join(', ')}
+Reply ONLY with JSON:
+- "summary": 2 encouraging sentences in English to the learner ("You…").
+- "wins": up to 2 short things they did well.
+- "mistakes": up to 4 distinct mistakes: wrong (what they said), right (corrected Hindi), rule (short English), skill (id or "other").
+- "patterns": up to 3 practice cards: english (an English sentence), target (its correct Hindi), note (short hint).
+- "tutor_notes": your updated notes about the learner in English (max 80 words), keeping useful old notes.
+- "next_focus": the skill id to practise next.`
+}
+
+export const LOCAL_RECAP_SCHEMA: Schema = {
+  type: 'OBJECT',
+  properties: {
+    summary: { type: 'STRING' },
+    wins: { type: 'ARRAY', items: { type: 'STRING' } },
+    mistakes: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { wrong: { type: 'STRING' }, right: { type: 'STRING' }, rule: { type: 'STRING' }, skill: { type: 'STRING' } },
+        required: ['wrong', 'right', 'rule', 'skill'],
+      },
+    },
+    patterns: {
+      type: 'ARRAY',
+      items: { type: 'OBJECT', properties: { english: { type: 'STRING' }, target: { type: 'STRING' }, note: { type: 'STRING' } }, required: ['english', 'target', 'note'] },
+    },
+    tutor_notes: { type: 'STRING' },
+    next_focus: { type: 'STRING', enum: SKILL_IDS },
+  },
+  required: ['summary', 'wins', 'mistakes', 'patterns', 'tutor_notes', 'next_focus'],
+}
+
+export function assessmentSystemLocal(s: Settings): string {
+  return `You are a Hindi examiner. Below is a placement conversation between the tutor Rani and a learner. ${learnerLine(s)}
+Score the learner's spoken Hindi grammar for EVERY skill id from 0 to 100 (0–20 cannot use it, 21–40 many errors, 41–60 inconsistent, 61–80 mostly correct, 81–100 reliable). If a skill was not tested, estimate from their overall level.
+Skill ids: ${SKILL_IDS.join(', ')}
+Reply ONLY with JSON:
+- "skills": [{"skill": id, "score": number}] for every skill id.
+- "strengths": 2 short English points.
+- "weaknesses": 2–3 short English points, most important first.
+- "summary": 2–3 sentences in English to the learner ("You…") about their level and what to focus on.
+- "tutor_notes": short notes for future lessons (max 60 words).`
+}
+
+export const LOCAL_ASSESSMENT_SCHEMA: Schema = {
+  type: 'OBJECT',
+  properties: {
+    skills: {
+      type: 'ARRAY',
+      items: { type: 'OBJECT', properties: { skill: { type: 'STRING', enum: SKILL_IDS }, score: { type: 'INTEGER' } }, required: ['skill', 'score'] },
+    },
+    strengths: { type: 'ARRAY', items: { type: 'STRING' } },
+    weaknesses: { type: 'ARRAY', items: { type: 'STRING' } },
+    summary: { type: 'STRING' },
+    tutor_notes: { type: 'STRING' },
+  },
+  required: ['skills', 'strengths', 'weaknesses', 'summary', 'tutor_notes'],
+}

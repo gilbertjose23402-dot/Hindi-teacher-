@@ -19,29 +19,36 @@ Rani listens, replies in natural spoken Hindi, quietly corrects your sentences, 
 Coming in milestone 2: Marathi mode (structured beginner lessons → conversation), flashcard review, courtroom/criminal-law
 and AI conversation tracks (unlock at level B1).
 
-## How it works (free tiers)
+## How it works — no account needed
 
-Everything runs on **Google Gemini** with one free key:
+Everything runs on your phone by default:
 
-| Step | Service | Notes |
+| Step | Default (no sign-up) | Optional upgrade |
 |---|---|---|
-| Speech → text | **Gemini** (audio → verbatim transcript) | Instructed to keep your mistakes exactly as spoken. |
-| Tutor brain | **Gemini** (newest Flash model, auto-detected) | Corrections, conversation, recaps, placement scoring. |
-| Text → speech | **Gemini voice** (`*-flash-*-tts`, female voices such as Kore, Aoede, Sulafat) | If the free voice limit runs out, Rani switches to the phone's Hindi voice for 10 minutes. |
+| Speech → text | Android's built-in speech recognition (Chrome) | Gemini or Groq Whisper — keeps your words exactly as spoken |
+| Tutor brain | **On-phone AI**: a Gemma model running inside Chrome (WebGPU, via WebLLM). One-time download, then works with no account | Gemini (faster, much more accurate corrections) or Groq |
+| Text → speech | Android's Hindi/Marathi voice | Gemini voices |
 
-**Optional:** a free **Groq** key (Settings → *Optional: Groq backup key*) is used automatically when Gemini hits its
-free limit — Whisper for listening, a Llama/GPT-OSS model for the brain.
+On-phone models offered (recommended one is picked from your phone's RAM):
 
-The app calls these APIs directly from your phone with your own key(s). There is no server.
+| Model | Download | Notes |
+|---|---|---|
+| Gemma 4 E2B | ~3 GB | Best Hindi; needs a recent phone with 8 GB+ RAM |
+| Gemma 2 2B | ~1.5 GB | Lighter, weaker Hindi grammar |
+| Gemma 3 1B | ~0.7 GB | Fastest; corrections often wrong |
+
+Honest expectations: on a phone, replies take roughly 10–40 s, and small models make grammar mistakes of their own.
+A free Gemini key (Settings → *Optional cloud AI*) gives replies in a few seconds and far more reliable corrections.
+If the main brain fails, Rani automatically tries any other brain you've set up.
 
 ## Setup on your phone
 
 1. Open the app link in **Chrome on Android**: `https://gilbertjose23402-dot.github.io/Hindi-teacher-/`
 2. Chrome menu (⋮) → **Add to Home screen** → Install.
-3. Get a free Gemini key and paste it in when asked: <https://aistudio.google.com/apikey> → *Create API key*.
-   (Optional backup: a Groq key from <https://console.groq.com/keys>.)
-4. Pick Rani's Gemini voice and tap **Test**. For the backup phone voice: phone **Settings → System → Languages →
-   Text-to-speech output →** ⚙ next to *Speech Services by Google* → *Install voice data* → **Hindi (India)** (later **Marathi**).
+3. In setup, pick an on-phone model and tap **Download** (use Wi-Fi, keep the app open). Tap **Test** afterwards to see how
+   fast it answers on your phone.
+4. For Rani's voice: phone **Settings → System → Languages → Text-to-speech output →** ⚙ next to
+   *Speech Services by Google* → *Install voice data* → **Hindi (India)** (later **Marathi**) → choose a female voice.
 
 ## Deploying (GitHub Pages)
 
@@ -63,7 +70,8 @@ Code map:
 - `src/lib/prompts.ts` — Rani's persona, correction rules, placement plan, JSON schemas
 - `src/lib/tutor.ts` — turn handling, recap, placement assessment, memory updates
 - `src/lib/skills.ts` — the Hindi grammar skill catalogue, scoring and focus selection
-- `src/lib/llm.ts` — Gemini/Groq calls, fallback, model discovery, transcription, Gemini speech
+- `src/lib/local.ts`, `src/lib/brain.worker.ts` — on-phone AI (WebLLM): model choice, download, KV-cache-friendly prompting
+- `src/lib/llm.ts` — brain routing and fallback, Gemini/Groq calls, model discovery, transcription, Gemini speech
 - `src/lib/speech.ts` — recording, speech recognition routing, Gemini voice playback with phone-voice fallback
 - `src/lib/store.ts`, `src/db.ts` — settings, learner profile, time log (IndexedDB via Dexie)
 - `src/screens/*` — Onboarding, Home, Conversation, Recap, Progress, Settings

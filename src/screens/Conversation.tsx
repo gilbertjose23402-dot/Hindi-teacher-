@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Icon, Spinner } from '../components/ui'
 import { db, type Correction, type Lang, type Session, type Turn } from '../db'
+import { useBrainProgress } from '../lib/local'
 import { TOPIC_BY_ID } from '../lib/prompts'
 import { go } from '../lib/router'
 import { SKILL_BY_ID } from '../lib/skills'
@@ -124,6 +125,7 @@ export default function Conversation({
   settingsRef.current = settings
   const started = useRef(false)
   const chatEnd = useRef<HTMLDivElement>(null)
+  const brain = useBrainProgress()
 
   const setPhase = (p: Phase) => {
     phaseRef.current = p
@@ -444,13 +446,21 @@ export default function Conversation({
             </button>
           </div>
         )}
-        <p className="status">{STATUS[phase]}</p>
+        {brain && (phase === 'thinking' || phase === 'starting' || phase === 'ending') ? (
+          <div className="dl" role="status">
+            <progress max={1} value={brain.progress} />
+            <p className="status">Loading Rani's brain… {Math.round(brain.progress * 100)}%</p>
+          </div>
+        ) : (
+          <p className="status">{STATUS[phase]}</p>
+        )}
       </footer>
 
       {phase === 'ending' && (
         <div className="overlay" role="status">
           <Spinner />
           <p>{kind === 'placement' ? 'Rani is assessing your Hindi…' : 'Rani is preparing your recap…'}</p>
+          {settings.llmPrimary === 'local' && <p className="hint">On the phone this can take a minute.</p>}
         </div>
       )}
     </div>
@@ -489,9 +499,11 @@ function RaniBubble({
           </button>
         ) : (
           <>
-            <button type="button" aria-pressed={showRoman} onClick={() => onToggle('roman')}>
-              Aa
-            </button>
+            {turn.roman && (
+              <button type="button" aria-pressed={showRoman} onClick={() => onToggle('roman')}>
+                Aa
+              </button>
+            )}
             <button type="button" aria-pressed={showEnglish} onClick={() => onToggle('english')}>
               EN
             </button>

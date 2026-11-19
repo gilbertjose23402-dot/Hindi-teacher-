@@ -44,7 +44,7 @@ export default function Home({ settings }: { settings: Settings }) {
 
       {!hasLlm(settings) && (
         <button type="button" className="banner warn" onClick={() => go('/settings')}>
-          Add your Gemini API key in Settings to start talking.
+          Set up Rani's brain in Settings (one-time download, no account) to start talking.
         </button>
       )}
 

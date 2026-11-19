@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { KeySetup, VoiceSetup } from '../components/Setup'
+import { BrainSetup, KeySetup, VoiceSetup } from '../components/Setup'
 import { Segmented } from '../components/ui'
 import { hasLlm } from '../lib/llm'
 import { saveSettings, type Settings } from '../lib/store'
@@ -9,7 +9,7 @@ const GOALS = [10, 15, 20, 30]
 export default function Onboarding({ settings }: { settings: Settings }) {
   const [step, setStep] = useState(0)
   const [mic, setMic] = useState<'idle' | 'ok' | 'denied'>('idle')
-  const steps = ['Welcome', 'About you', 'Gemini key', 'Voice', 'Daily goal']
+  const steps = ['Welcome', 'About you', 'Brain', 'Voice', 'Daily goal']
 
   const finish = async () => {
     await navigator.storage?.persist?.().catch(() => false)
@@ -48,7 +48,7 @@ export default function Onboarding({ settings }: { settings: Settings }) {
             Talk to me every day like a friend. I'll keep the conversation going, quietly fix your grammar, remember what you've learned, and track
             your practice time.
           </p>
-          <p className="hint">Setup takes about 3 minutes — you'll need one free Google Gemini key.</p>
+          <p className="hint">No account needed: I listen and speak using your phone, and my AI brain runs on your phone after a one-time download.</p>
         </section>
       )}
 
@@ -82,9 +82,14 @@ export default function Onboarding({ settings }: { settings: Settings }) {
 
       {step === 2 && (
         <section className="stack">
-          <h2>Your free Gemini key</h2>
-          <KeySetup settings={settings} />
-          {!hasLlm(settings) && <p className="hint">Add your Gemini key to continue. You can change keys any time in Settings.</p>}
+          <h2>Rani's brain</h2>
+          <p>Rani's AI runs right on your phone — no account, no sign-up. Pick a model and download it once.</p>
+          <BrainSetup settings={settings} />
+          <details className="optional">
+            <summary>Optional: use Google Gemini instead</summary>
+            <KeySetup settings={settings} />
+          </details>
+          {!hasLlm(settings) && <p className="hint">You can skip this for now and set up the brain later in Settings.</p>}
         </section>
       )}
 
@@ -129,7 +134,7 @@ export default function Onboarding({ settings }: { settings: Settings }) {
           <span />
         )}
         {step < steps.length - 1 ? (
-          <button type="button" className="btn primary" disabled={!canNext || (step === 2 && !hasLlm(settings))} onClick={() => setStep(step + 1)}>
+          <button type="button" className="btn primary" disabled={!canNext} onClick={() => setStep(step + 1)}>
             Next
           </button>
         ) : (
