@@ -168,13 +168,22 @@ export async function generateJson<T>(req: JsonRequest, s: Settings): Promise<{ 
 
 // ---------- Model discovery ----------
 
+/** All Gemini models usable with generateContent (chat and speech models). */
 export async function listGeminiModels(key: string): Promise<string[]> {
   const res = await doFetch('gemini', `${GEMINI_BASE}/models?pageSize=1000`, { headers: { 'x-goog-api-key': key } })
   const data = await res.json()
   return (data.models ?? [])
     .filter((m: { supportedGenerationMethods?: string[] }) => m.supportedGenerationMethods?.includes('generateContent'))
     .map((m: { name: string }) => m.name.replace(/^models\//, ''))
-    .filter((n: string) => /^gemini/.test(n) && !/(tts|image|embed|live|audio|vision|robotics|computer)/i.test(n))
+    .filter((n: string) => /^gemini/.test(n))
+}
+
+export function geminiChatModels(models: string[]): string[] {
+  return models.filter((n) => !/(tts|image|embed|live|audio|vision|robotics|computer)/i.test(n))
+}
+
+export function geminiTtsModels(models: string[]): string[] {
+  return models.filter((n) => /tts/i.test(n))
 }
 
 function versionOf(name: string): number {
@@ -183,11 +192,20 @@ function versionOf(name: string): number {
 }
 
 /** Prefer the newest stable "flash" model (fast + generous free tier). */
-export function pickGeminiModel(models: string[]): string | undefined {
+export function pickGeminiModel(all: string[]): string | undefined {
+  const models = geminiChatModels(all)
   const flash = models.filter((n) => /flash/.test(n) && !/lite/.test(n))
   const stable = flash.filter((n) => /^gemini-\d+(\.\d+)?-flash$/.test(n))
   const rank = (list: string[]) => [...list].sort((a, b) => versionOf(b) - versionOf(a))[0]
   return rank(stable) ?? (models.includes('gemini-flash-latest') ? 'gemini-flash-latest' : undefined) ?? rank(flash) ?? models[0]
+}
+
+/** Prefer a stable flash TTS model, else the newest flash preview, else any TTS model. */
+export function pickGeminiTtsModel(all: string[]): string | undefined {
+  const tts = geminiTtsModels(all)
+  const byVersion = (list: string[]) => [...list].sort((a, b) => versionOf(b) - versionOf(a))[0]
+  const flash = tts.filter((n) => /flash/.test(n))
+  return byVersion(flash.filter((n) => !/preview|exp/.test(n))) ?? byVersion(flash) ?? byVersion(tts)
 }
 
 export async function listGroqModels(key: string): Promise<string[]> {
@@ -255,4 +273,29 @@ export async function groqTranscribe(blob: Blob, lang: 'hi' | 'mr', key: string,
   })
   const data = await res.json()
   return String(data.text ?? '').trim()
+}
+
+// ---------- Gemini text-to-speech ----------
+
+export interface GeminiAudio {
+  data: string
+  mimeType: string
+}
+
+export async function geminiSpeech(text: string, key: string, model: string, voice: string, style: string): Promise<GeminiAudio> {
+  const res = await doFetch('gemini', `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: `${style}: ${text}` }] }],
+      generationConfig: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+      },
+    }),
+  })
+  const data = await res.json()
+  const part = ((data.candidates?.[0]?.content?.parts ?? []) as { inlineData?: GeminiAudio }[]).find((p) => p.inlineData?.data)
+  if (!part?.inlineData) throw new ApiError('gemini', 'Gemini returned no audio.', undefined, true)
+  return part.inlineData
 }

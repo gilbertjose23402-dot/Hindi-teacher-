@@ -4,6 +4,7 @@ import { dayKey } from './dates'
 import { defaultSkills, type SkillState } from './skills'
 
 export type SttEngine = 'groq' | 'gemini' | 'browser'
+export type TtsEngine = 'gemini' | 'browser'
 export type LlmProvider = 'gemini' | 'groq'
 
 export interface Settings {
@@ -18,13 +19,21 @@ export interface Settings {
   whisperModel: string
   llmPrimary: LlmProvider
   sttEngine: SttEngine
+  ttsEngine: TtsEngine
+  geminiTtsModel: string
+  /** Gemini prebuilt voice name for Rani. */
+  geminiVoice: string
+  /** Phone (Android) voices — used when Gemini's voice is off or over its free limit. */
   voiceHi: string
   voiceMr: string
   speechRate: number
   autoSpeak: boolean
   showRomanDefault: boolean
   dailyGoalMin: number
+  settingsVersion: number
 }
+
+const SETTINGS_VERSION = 2
 
 export const DEFAULT_SETTINGS: Settings = {
   onboarded: false,
@@ -36,13 +45,17 @@ export const DEFAULT_SETTINGS: Settings = {
   groqModel: 'llama-3.3-70b-versatile',
   whisperModel: 'whisper-large-v3',
   llmPrimary: 'gemini',
-  sttEngine: 'groq',
+  sttEngine: 'gemini',
+  ttsEngine: 'gemini',
+  geminiTtsModel: 'gemini-2.5-flash-preview-tts',
+  geminiVoice: 'Kore',
   voiceHi: '',
   voiceMr: '',
   speechRate: 0.95,
   autoSpeak: true,
   showRomanDefault: false,
   dailyGoalMin: 15,
+  settingsVersion: SETTINGS_VERSION,
 }
 
 export interface Profile {
@@ -74,7 +87,10 @@ export function defaultProfile(lang: Lang): Profile {
 
 export async function getSettings(): Promise<Settings> {
   const row = await db.kv.get('settings')
-  return { ...DEFAULT_SETTINGS, ...((row?.value as Partial<Settings>) ?? {}) }
+  const stored = (row?.value as Partial<Settings>) ?? {}
+  // v2: Gemini does speech recognition, the tutor and the voice by default; Groq is optional.
+  const migrated: Partial<Settings> = (stored.settingsVersion ?? 1) < 2 ? { sttEngine: 'gemini', ttsEngine: 'gemini', settingsVersion: SETTINGS_VERSION } : {}
+  return { ...DEFAULT_SETTINGS, ...stored, ...migrated }
 }
 
 export async function saveSettings(patch: Partial<Settings>): Promise<void> {

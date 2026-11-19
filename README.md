@@ -21,23 +21,27 @@ and AI conversation tracks (unlock at level B1).
 
 ## How it works (free tiers)
 
+Everything runs on **Google Gemini** with one free key:
+
 | Step | Service | Notes |
 |---|---|---|
-| Speech → text | **Groq Whisper** (`whisper-large-v3`) | Keeps your mistakes as spoken. Fallbacks: Gemini audio, or the phone's recogniser. |
-| Tutor brain | **Google Gemini** (newest Flash model, auto-detected) | Falls back to a Groq model automatically if Gemini's free limit is hit. |
-| Text → speech | Android's built-in Google voices | Pick a female Hindi voice in Settings. |
+| Speech → text | **Gemini** (audio → verbatim transcript) | Instructed to keep your mistakes exactly as spoken. |
+| Tutor brain | **Gemini** (newest Flash model, auto-detected) | Corrections, conversation, recaps, placement scoring. |
+| Text → speech | **Gemini voice** (`*-flash-*-tts`, female voices such as Kore, Aoede, Sulafat) | If the free voice limit runs out, Rani switches to the phone's Hindi voice for 10 minutes. |
 
-The app calls these APIs directly from your phone with your own keys. There is no server.
+**Optional:** a free **Groq** key (Settings → *Optional: Groq backup key*) is used automatically when Gemini hits its
+free limit — Whisper for listening, a Llama/GPT-OSS model for the brain.
+
+The app calls these APIs directly from your phone with your own key(s). There is no server.
 
 ## Setup on your phone
 
 1. Open the app link in **Chrome on Android**: `https://gilbertjose23402-dot.github.io/Hindi-teacher-/`
 2. Chrome menu (⋮) → **Add to Home screen** → Install.
-3. Get two free keys and paste them in when asked:
-   - Gemini: <https://aistudio.google.com/apikey> → *Create API key*
-   - Groq: <https://console.groq.com/keys> → *Create API Key*
-4. If Rani's voice is missing or male: phone **Settings → System → Languages → Text-to-speech output →** ⚙ next to
-   *Speech Services by Google* → *Install voice data* → **Hindi (India)** (and later **Marathi**) → choose a female voice.
+3. Get a free Gemini key and paste it in when asked: <https://aistudio.google.com/apikey> → *Create API key*.
+   (Optional backup: a Groq key from <https://console.groq.com/keys>.)
+4. Pick Rani's Gemini voice and tap **Test**. For the backup phone voice: phone **Settings → System → Languages →
+   Text-to-speech output →** ⚙ next to *Speech Services by Google* → *Install voice data* → **Hindi (India)** (later **Marathi**).
 
 ## Deploying (GitHub Pages)
 
@@ -59,7 +63,7 @@ Code map:
 - `src/lib/prompts.ts` — Rani's persona, correction rules, placement plan, JSON schemas
 - `src/lib/tutor.ts` — turn handling, recap, placement assessment, memory updates
 - `src/lib/skills.ts` — the Hindi grammar skill catalogue, scoring and focus selection
-- `src/lib/llm.ts` — Gemini/Groq calls, fallback, model discovery, transcription
-- `src/lib/speech.ts` — recording, phone speech recognition, text-to-speech
+- `src/lib/llm.ts` — Gemini/Groq calls, fallback, model discovery, transcription, Gemini speech
+- `src/lib/speech.ts` — recording, speech recognition routing, Gemini voice playback with phone-voice fallback
 - `src/lib/store.ts`, `src/db.ts` — settings, learner profile, time log (IndexedDB via Dexie)
 - `src/screens/*` — Onboarding, Home, Conversation, Recap, Progress, Settings

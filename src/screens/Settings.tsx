@@ -87,14 +87,14 @@ export default function Settings({ settings }: { settings: S }) {
             value={settings.sttEngine}
             onChange={(v) => saveSettings({ sttEngine: v })}
             options={[
-              { value: 'groq', label: 'Groq Whisper' },
               { value: 'gemini', label: 'Gemini' },
+              { value: 'groq', label: 'Groq' },
               ...(browserRecognitionAvailable() ? [{ value: 'browser' as const, label: 'Phone' }] : []),
             ]}
           />
           <p className="hint">
-            Groq Whisper is the most accurate and keeps your mistakes as you said them. "Phone" uses Android's built-in recognizer (no key needed) but
-            it tends to auto-correct grammar, which hides mistakes.
+            Gemini (default) writes down exactly what you said, mistakes included. Groq needs the optional key. "Phone" uses Android's built-in
+            recogniser, which tends to auto-correct your grammar and hide mistakes.
           </p>
         </div>
       </section>

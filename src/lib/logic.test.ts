@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { TimeEntry } from '../db'
 import { computeStreak, dayKey, lastNDays } from './dates'
-import { parseJsonLoose, pickGeminiModel, pickGroqChatModel } from './llm'
+import { parseJsonLoose, pickGeminiModel, pickGeminiTtsModel, pickGroqChatModel } from './llm'
 import { HINDI_SKILLS, applyEvidence, defaultSkills, levelFromScore, overallScore, pickFocus } from './skills'
 import { normalizeTurn } from './tutor'
 
@@ -100,6 +100,13 @@ describe('model picking', () => {
     expect(pickGeminiModel(['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro', 'gemini-3-flash-preview'])).toBe('gemini-2.5-flash')
     expect(pickGeminiModel(['gemini-3-flash', 'gemini-2.5-flash'])).toBe('gemini-3-flash')
     expect(pickGeminiModel(['gemini-flash-latest', 'gemini-3-flash-preview'])).toBe('gemini-flash-latest')
+  })
+  it('never picks a speech model as the brain, and picks the best voice model', () => {
+    const all = ['gemini-2.5-flash-preview-tts', 'gemini-2.5-flash', 'gemini-2.5-pro-preview-tts']
+    expect(pickGeminiModel(all)).toBe('gemini-2.5-flash')
+    expect(pickGeminiTtsModel(all)).toBe('gemini-2.5-flash-preview-tts')
+    expect(pickGeminiTtsModel([...all, 'gemini-3-flash-tts'])).toBe('gemini-3-flash-tts')
+    expect(pickGeminiTtsModel(['gemini-2.5-flash'])).toBeUndefined()
   })
   it('picks a Groq chat model that is not whisper', () => {
     expect(pickGroqChatModel(['whisper-large-v3', 'llama-3.3-70b-versatile'])).toBe('llama-3.3-70b-versatile')

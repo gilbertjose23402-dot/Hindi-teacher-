@@ -1144,3 +1144,18 @@ input[type='range'] {
   font-size: 0.72rem;
   color: var(--muted);
 }
+
+details.optional {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+details.optional summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--ink-2);
+}
+details.optional[open] summary {
+  margin-bottom: 10px;
+}

@@ -9,7 +9,7 @@ const GOALS = [10, 15, 20, 30]
 export default function Onboarding({ settings }: { settings: Settings }) {
   const [step, setStep] = useState(0)
   const [mic, setMic] = useState<'idle' | 'ok' | 'denied'>('idle')
-  const steps = ['Welcome', 'About you', 'AI keys', 'Voice', 'Daily goal']
+  const steps = ['Welcome', 'About you', 'Gemini key', 'Voice', 'Daily goal']
 
   const finish = async () => {
     await navigator.storage?.persist?.().catch(() => false)
@@ -48,7 +48,7 @@ export default function Onboarding({ settings }: { settings: Settings }) {
             Talk to me every day like a friend. I'll keep the conversation going, quietly fix your grammar, remember what you've learned, and track
             your practice time.
           </p>
-          <p className="hint">Setup takes about 5 minutes — you'll need two free API keys.</p>
+          <p className="hint">Setup takes about 3 minutes — you'll need one free Google Gemini key.</p>
         </section>
       )}
 
@@ -82,9 +82,9 @@ export default function Onboarding({ settings }: { settings: Settings }) {
 
       {step === 2 && (
         <section className="stack">
-          <h2>Free AI keys</h2>
+          <h2>Your free Gemini key</h2>
           <KeySetup settings={settings} />
-          {!hasLlm(settings) && <p className="hint">Add at least the Gemini key to continue. You can change keys any time in Settings.</p>}
+          {!hasLlm(settings) && <p className="hint">Add your Gemini key to continue. You can change keys any time in Settings.</p>}
         </section>
       )}
 

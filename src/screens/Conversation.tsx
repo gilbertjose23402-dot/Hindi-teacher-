@@ -4,7 +4,7 @@ import { db, type Correction, type Lang, type Session, type Turn } from '../db'
 import { TOPIC_BY_ID } from '../lib/prompts'
 import { go } from '../lib/router'
 import { SKILL_BY_ID } from '../lib/skills'
-import { NoSpeechError, speak, startListening, stopSpeaking, type Listening } from '../lib/speech'
+import { NoSpeechError, speak, startListening, stopSpeaking, unlockAudio, type Listening } from '../lib/speech'
 import { getProfile, logPracticeTime, type Settings } from '../lib/store'
 import { applyTurnEvidence, finishPlacement, finishPractice, runTurn } from '../lib/tutor'
 
@@ -161,7 +161,8 @@ export default function Conversation({
     if (res.placementComplete) setPlacementReady(true)
     if (settingsRef.current.autoSpeak) {
       setPhase('speaking')
-      await speak(res.reply, lang, settingsRef.current)
+      const ttsNotice = await speak(res.reply, lang, settingsRef.current)
+      if (ttsNotice) setNotice(ttsNotice)
     }
     if (phaseRef.current === 'speaking' || phaseRef.current === 'thinking') setPhase('idle')
     timer.touch()
@@ -315,7 +316,13 @@ export default function Conversation({
   const endLabel = kind === 'placement' ? (placementReady || learnerCount >= 5 ? 'Finish' : 'Quit') : 'End'
 
   return (
-    <div className="talk" onPointerDown={timer.touch}>
+    <div
+      className="talk"
+      onPointerDown={() => {
+        timer.touch()
+        unlockAudio()
+      }}
+    >
       <header className="talk-head">
         <div className="avatar" aria-hidden>
           रा
