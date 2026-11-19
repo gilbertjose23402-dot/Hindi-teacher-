@@ -5,7 +5,7 @@ import { defaultSkills, type SkillState } from './skills'
 
 export type SttEngine = 'groq' | 'gemini' | 'browser'
 export type TtsEngine = 'gemini' | 'browser'
-export type LlmProvider = 'local' | 'gemini' | 'groq'
+export type LlmProvider = 'builtin' | 'local' | 'gemini' | 'groq'
 
 export interface Settings {
   onboarded: boolean
@@ -21,6 +21,9 @@ export interface Settings {
   /** WebLLM model id of the on-phone brain ('' until one is downloaded). */
   localModel: string
   localModelReady: boolean
+  /** Chrome's built-in AI (Gemini Nano) works on this phone. */
+  builtinAiReady: boolean
+  builtinAiHindi: boolean
   sttEngine: SttEngine
   ttsEngine: TtsEngine
   geminiTtsModel: string
@@ -50,6 +53,8 @@ export const DEFAULT_SETTINGS: Settings = {
   llmPrimary: 'local',
   localModel: '',
   localModelReady: false,
+  builtinAiReady: false,
+  builtinAiHindi: false,
   sttEngine: 'browser',
   ttsEngine: 'browser',
   geminiTtsModel: 'gemini-2.5-flash-preview-tts',

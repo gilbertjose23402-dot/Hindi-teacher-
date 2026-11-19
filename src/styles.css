@@ -1221,3 +1221,10 @@ details.optional[open] summary {
   align-items: center;
   justify-content: space-between;
 }
+
+.builtin-card {
+  border: 1px solid var(--primary);
+  background: var(--primary-soft);
+  border-radius: 12px;
+  padding: 12px;
+}

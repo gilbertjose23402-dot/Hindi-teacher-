@@ -24,6 +24,7 @@ import {
   type LocalModel,
 } from '../lib/local'
 import { GEMINI_VOICES, LANG_NAME, loadVoices, speak, ttsAvailable, unlockAudio, voicesFor } from '../lib/speech'
+import { builtinJson, checkBuiltinAi, type BuiltinStatus } from '../lib/builtin'
 import { saveSettings, type Settings } from '../lib/store'
 import { Segmented, Spinner } from './ui'
 
@@ -341,7 +342,13 @@ export function BrainSetup({ settings }: { settings: Settings }) {
   }, [settings.localModel, choice])
 
   if (!gpu) return <Spinner label="Checking what your phone can run…" />
-  if (!gpu.ok) return <p className="error-text">{gpu.reason}</p>
+  if (!gpu.ok)
+    return (
+      <div className="stack">
+        <BuiltinAiCard settings={settings} />
+        <p className="error-text">{gpu.reason}</p>
+      </div>
+    )
 
   const models = LOCAL_MODELS.filter((m) => resolveModelId(m, gpu.f16))
   const chosen = models.find((m) => m.base === choice) ?? models[0]
@@ -356,7 +363,7 @@ export function BrainSetup({ settings }: { settings: Settings }) {
     try {
       await navigator.storage?.persist?.().catch(() => false)
       await loadBrain(chosenId)
-      await saveSettings({ localModel: chosenId, localModelReady: true, llmPrimary: 'local' })
+      await saveSettings({ localModel: chosenId, localModelReady: true, ...(settings.llmPrimary === 'builtin' && settings.builtinAiReady ? {} : { llmPrimary: 'local' as const }) })
       await refresh(gpu)
     } catch (e) {
       setErr((e as Error).message)
@@ -396,6 +403,7 @@ export function BrainSetup({ settings }: { settings: Settings }) {
 
   return (
     <div className="stack">
+      <BuiltinAiCard settings={settings} />
       <div className="model-list" role="radiogroup" aria-label="On-phone AI model">
         {models.map((m) => (
           <label key={m.base} className={'model-option' + (choice === m.base ? ' on' : '')}>
@@ -449,6 +457,81 @@ export function BrainSetup({ settings }: { settings: Settings }) {
         One-time download — use Wi-Fi and keep Rani open until it finishes. After that it works with no account. Loading the brain takes a few
         seconds each time the app starts.
       </p>
+    </div>
+  )
+}
+
+/** Detects Chrome's built-in AI (Gemini Nano) on this phone and lets Rani use it — no download. */
+export function BuiltinAiCard({ settings }: { settings: Settings }) {
+  const [status, setStatus] = useState<BuiltinStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [err, setErr] = useState('')
+  const progress = useBrainProgress()
+
+  useEffect(() => {
+    void checkBuiltinAi().then(setStatus)
+  }, [])
+
+  if (!status) return <Spinner label="Checking for your phone's built-in AI…" />
+  if (status.state === 'missing' || status.state === 'unavailable') {
+    return (
+      <p className="hint">
+        Checked: your phone's built-in AI (Gemini Nano / Moto AI) isn't available to web apps in Chrome on this phone, so Rani uses a model
+        downloaded below.
+      </p>
+    )
+  }
+
+  const tryIt = async () => {
+    setBusy(true)
+    setErr('')
+    setMsg('')
+    const t0 = performance.now()
+    try {
+      const out = await builtinJson<{ reply: string }>(
+        {
+          system: 'You are Rani, a friendly Hindi tutor. Reply only with JSON.',
+          messages: [{ role: 'user', text: 'Greet the learner warmly in one short Hindi sentence.' }],
+          schema: { type: 'OBJECT', properties: { reply: { type: 'STRING' } }, required: ['reply'] },
+        },
+        status.hindi,
+      )
+      await saveSettings({ builtinAiReady: true, builtinAiHindi: status.hindi, llmPrimary: 'builtin' })
+      setStatus({ ...status, state: 'available' })
+      setMsg(`“${out.reply}” — answered in ${((performance.now() - t0) / 1000).toFixed(1)} s`)
+    } catch (e) {
+      setErr(`The built-in AI didn't work: ${(e as Error).message}`)
+      await saveSettings({ builtinAiReady: false, ...(settings.llmPrimary === 'builtin' ? { llmPrimary: 'local' as const } : {}) })
+    }
+    setBusy(false)
+  }
+
+  const active = settings.builtinAiReady && settings.llmPrimary === 'builtin'
+  return (
+    <div className="builtin-card stack">
+      <div>
+        <strong>Your phone's built-in AI is available</strong>
+        <p className="hint">
+          Gemini Nano, already on your phone through Chrome — {status.state === 'available' ? 'no download needed' : 'Chrome will fetch it once'}.
+          {!status.hindi && ' Chrome lists it for English only here, so its Hindi may be weak — try it and judge.'}
+        </p>
+      </div>
+      {progress && (
+        <div className="dl" role="status">
+          <progress max={1} value={progress.progress} />
+          <small className="muted">{progress.text}</small>
+        </div>
+      )}
+      <div className="button-row center-row">
+        {active ? <span className="ok-text">✓ Rani is using the built-in AI</span> : <span />}
+        <button type="button" className={active ? 'btn small' : 'btn primary small'} disabled={busy} onClick={tryIt}>
+          {busy ? <Spinner /> : active ? 'Test' : 'Use built-in AI'}
+        </button>
+      </div>
+      {msg && <p className="ok-text">{msg}</p>}
+      {err && <p className="error-text">{err}</p>}
+      <p className="hint">Or download a model below — it can be used as a backup.</p>
     </div>
   )
 }

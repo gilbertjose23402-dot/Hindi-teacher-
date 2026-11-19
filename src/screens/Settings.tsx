@@ -73,9 +73,9 @@ export default function Settings({ settings }: { settings: S }) {
             label="Main brain"
             value={settings.llmPrimary}
             onChange={(v) => saveSettings({ llmPrimary: v })}
-            options={(['local', 'gemini', 'groq'] as LlmProvider[])
+            options={(['builtin', 'local', 'gemini', 'groq'] as LlmProvider[])
               .filter((p) => p === 'local' || p === settings.llmPrimary || providerAvailable(settings, p))
-              .map((p) => ({ value: p, label: p === 'local' ? 'On phone' : PROVIDER_NAME[p] }))}
+              .map((p) => ({ value: p, label: PROVIDER_NAME[p] }))}
           />
           <p className="hint">If the main brain fails, Rani automatically tries the others you've set up.</p>
         </div>

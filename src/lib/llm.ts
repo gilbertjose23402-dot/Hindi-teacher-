@@ -1,3 +1,4 @@
+import { builtinJson } from './builtin'
 import { localJson } from './local'
 import type { LlmProvider, Settings } from './store'
 
@@ -144,22 +145,28 @@ async function groqJson<T>(req: JsonRequest, key: string, model: string): Promis
 }
 
 export function providerAvailable(s: Settings, p: LlmProvider): boolean {
+  if (p === 'builtin') return s.builtinAiReady
   if (p === 'local') return s.localModelReady && !!s.localModel
   return p === 'gemini' ? !!s.geminiKey : !!s.groqKey
 }
 
 export function hasLlm(s: Settings): boolean {
-  return providerAvailable(s, 'local') || providerAvailable(s, 'gemini') || providerAvailable(s, 'groq')
+  return (['builtin', 'local', 'gemini', 'groq'] as LlmProvider[]).some((p) => providerAvailable(s, p))
 }
 
-export const PROVIDER_NAME: Record<LlmProvider, string> = { local: 'On-phone AI', gemini: 'Gemini', groq: 'Groq' }
+export const PROVIDER_NAME: Record<LlmProvider, string> = { builtin: 'Built-in AI', local: 'On phone', gemini: 'Gemini', groq: 'Groq' }
+
+/** Small on-device models get the compact prompts. */
+export function isOnDevice(p: LlmProvider): boolean {
+  return p === 'local' || p === 'builtin'
+}
 
 /**
  * Ask the primary brain for JSON; if it fails, try the other configured ones
  * (on-phone model, Gemini, Groq — whichever are set up).
  */
 export async function generateJson<T>(source: JsonRequestSource, s: Settings): Promise<{ data: T; provider: LlmProvider }> {
-  const all: LlmProvider[] = ['local', 'gemini', 'groq']
+  const all: LlmProvider[] = ['builtin', 'local', 'gemini', 'groq']
   const order = [s.llmPrimary, ...all.filter((p) => p !== s.llmPrimary)]
   const usable = order.filter((p) => providerAvailable(s, p))
   if (usable.length === 0) throw new ApiError('none', "Rani's brain isn't set up yet. Download it in Settings → Rani's brain (or add a Gemini key).")
@@ -168,7 +175,9 @@ export async function generateJson<T>(source: JsonRequestSource, s: Settings): P
     const req = typeof source === 'function' ? source(p) : source
     try {
       const data =
-        p === 'local'
+        p === 'builtin'
+          ? await builtinJson<T>(req, s.builtinAiHindi)
+          : p === 'local'
           ? await localJson<T>(req, s.localModel)
           : p === 'gemini'
             ? await geminiJson<T>(req, s.geminiKey, s.geminiModel)

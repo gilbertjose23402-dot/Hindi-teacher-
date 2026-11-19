@@ -29,7 +29,11 @@ Everything runs on your phone by default:
 | Tutor brain | **On-phone AI**: a Gemma model running inside Chrome (WebGPU, via WebLLM). One-time download, then works with no account | Gemini (faster, much more accurate corrections) or Groq |
 | Text → speech | Android's Hindi/Marathi voice | Gemini voices |
 
-On-phone models offered (recommended one is picked from your phone's RAM):
+**Phone's built-in AI:** if Chrome on your phone exposes its built-in model (Gemini Nano, via Chrome's Prompt API), Rani
+detects it in setup and can use it with no download. Native on-device AI such as AICore or Moto AI is only open to Play Store
+apps, not web apps, so on phones where Chrome doesn't offer it Rani uses a downloaded model instead.
+
+On-phone models offered for download (recommended one is picked from your phone's RAM):
 
 | Model | Download | Notes |
 |---|---|---|
@@ -70,6 +74,7 @@ Code map:
 - `src/lib/prompts.ts` — Rani's persona, correction rules, placement plan, JSON schemas
 - `src/lib/tutor.ts` — turn handling, recap, placement assessment, memory updates
 - `src/lib/skills.ts` — the Hindi grammar skill catalogue, scoring and focus selection
+- `src/lib/builtin.ts` — the phone's built-in AI through Chrome (Prompt API / Gemini Nano), when available
 - `src/lib/local.ts`, `src/lib/brain.worker.ts` — on-phone AI (WebLLM): model choice, download, KV-cache-friendly prompting
 - `src/lib/llm.ts` — brain routing and fallback, Gemini/Groq calls, model discovery, transcription, Gemini speech
 - `src/lib/speech.ts` — recording, speech recognition routing, Gemini voice playback with phone-voice fallback

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Icon, Spinner } from '../components/ui'
 import { db, type Correction, type Lang, type Session, type Turn } from '../db'
+import { isOnDevice } from '../lib/llm'
 import { useBrainProgress } from '../lib/local'
 import { TOPIC_BY_ID } from '../lib/prompts'
 import { go } from '../lib/router'
@@ -460,7 +461,7 @@ export default function Conversation({
         <div className="overlay" role="status">
           <Spinner />
           <p>{kind === 'placement' ? 'Rani is assessing your Hindi…' : 'Rani is preparing your recap…'}</p>
-          {settings.llmPrimary === 'local' && <p className="hint">On the phone this can take a minute.</p>}
+          {isOnDevice(settings.llmPrimary) && <p className="hint">On the phone this can take a minute.</p>}
         </div>
       )}
     </div>

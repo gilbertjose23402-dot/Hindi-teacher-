@@ -97,6 +97,9 @@ function emit(p: BrainProgress | null) {
   listeners.forEach((l) => l())
 }
 
+/** Lets other brains (the phone's built-in AI) show their own download progress. */
+export const reportBrainProgress = emit
+
 export function useBrainProgress(): BrainProgress | null {
   return useSyncExternalStore(
     (cb) => {

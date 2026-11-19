@@ -1,5 +1,5 @@
 import { db, type Card, type Correction, type Evidence, type PlacementResult, type Recap, type Session } from '../db'
-import { generateJson, type ChatMsg, type JsonRequest } from './llm'
+import { generateJson, isOnDevice, type ChatMsg, type JsonRequest } from './llm'
 import {
   ASSESSMENT_SCHEMA,
   LOCAL_ASSESSMENT_SCHEMA,
@@ -101,7 +101,7 @@ export async function runTurn(session: Session, s: Settings): Promise<TurnResult
   const learnerMsgs = session.turns.filter((t) => t.role === 'user').length
   const focus = session.focus ?? HINDI_SKILLS[0].id
   const { data, provider } = await generateJson<RawTurn>((p): JsonRequest => {
-    if (p === 'local') {
+    if (isOnDevice(p)) {
       const system = session.kind === 'placement' ? placementSystemLocal(s) : practiceSystemLocal(s, profile, focus, session.topic)
       return { system, messages: toMessages(session, true), schema: LOCAL_TURN_SCHEMA, temperature: 0.6, maxTokens: 320 }
     }
@@ -110,8 +110,8 @@ export async function runTurn(session: Session, s: Settings): Promise<TurnResult
   }, s)
   const turn = normalizeTurn(data)
   if (session.kind === 'placement') {
-    const modelSaysDone = provider !== 'local' && turn.placementComplete
-    turn.placementComplete = (modelSaysDone && learnerMsgs >= PLACEMENT_MIN) || learnerMsgs >= (provider === 'local' ? 10 : PLACEMENT_MAX)
+    const modelSaysDone = !isOnDevice(provider) && turn.placementComplete
+    turn.placementComplete = (modelSaysDone && learnerMsgs >= PLACEMENT_MIN) || learnerMsgs >= (isOnDevice(provider) ? 10 : PLACEMENT_MAX)
   } else {
     turn.placementComplete = false
   }
@@ -153,7 +153,7 @@ export async function finishPractice(sessionId: number): Promise<Session> {
   const messages: ChatMsg[] = [{ role: 'user', text: transcript(session) }]
   const { data } = await generateJson<RawRecap>(
     (p) =>
-      p === 'local'
+      isOnDevice(p)
         ? { system: recapSystemLocal(s, profile), messages, schema: LOCAL_RECAP_SCHEMA, temperature: 0.3, maxTokens: 700 }
         : { system: recapSystem(s, profile), messages, schema: RECAP_SCHEMA, temperature: 0.4 },
     s,
@@ -202,7 +202,7 @@ export async function finishPlacement(sessionId: number): Promise<Session> {
   const messages: ChatMsg[] = [{ role: 'user', text: transcript(session) }]
   const { data } = await generateJson<RawAssessment>(
     (p) =>
-      p === 'local'
+      isOnDevice(p)
         ? { system: assessmentSystemLocal(s), messages, schema: LOCAL_ASSESSMENT_SCHEMA, temperature: 0.2, maxTokens: 800 }
         : { system: assessmentSystem(s), messages, schema: ASSESSMENT_SCHEMA, temperature: 0.2 },
     s,
