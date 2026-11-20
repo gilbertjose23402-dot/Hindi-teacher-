@@ -231,15 +231,38 @@ interface EngineLike {
   chat: { completions: { create(req: unknown): Promise<unknown> } }
 }
 
-export async function runLocalJson<T>(eng: EngineLike, req: JsonRequest): Promise<T> {
-  const res = (await eng.chat.completions.create({
+type Chunk = { choices?: { delta?: { content?: string }; finish_reason?: string | null }[] }
+
+/**
+ * Run one JSON request on the on-phone model. With `onPartial`, the answer is
+ * streamed so the app can act on the reply before the rest is written.
+ */
+export async function runLocalJson<T>(eng: EngineLike, req: JsonRequest, onPartial?: (raw: string) => void): Promise<T> {
+  const params = {
     messages: buildLocalMessages(req),
     temperature: req.temperature ?? 0.6,
     max_tokens: req.maxTokens ?? 400,
     response_format: { type: 'json_object', schema: JSON.stringify(toJsonSchema(req.schema)) },
-  })) as { choices?: { message?: { content?: string }; finish_reason?: string }[] }
-  const choice = res.choices?.[0]
-  const raw = choice?.message?.content ?? ''
+  }
+  let raw = ''
+  let finishReason: string | null | undefined
+  if (onPartial) {
+    const stream = (await eng.chat.completions.create({ ...params, stream: true })) as AsyncIterable<Chunk>
+    for await (const chunk of stream) {
+      const c = chunk.choices?.[0]
+      const delta = c?.delta?.content ?? ''
+      if (delta) {
+        raw += delta
+        onPartial(raw)
+      }
+      if (c?.finish_reason) finishReason = c.finish_reason
+    }
+  } else {
+    const res = (await eng.chat.completions.create(params)) as { choices?: { message?: { content?: string }; finish_reason?: string }[] }
+    raw = res.choices?.[0]?.message?.content ?? ''
+    finishReason = res.choices?.[0]?.finish_reason
+  }
+  const choice = { finish_reason: finishReason }
   if (!raw) throw new Error('Rani’s on-phone brain returned nothing. Please try again.')
   let data: T
   try {
@@ -255,7 +278,7 @@ export async function runLocalJson<T>(eng: EngineLike, req: JsonRequest): Promis
   return data
 }
 
-export async function localJson<T>(req: JsonRequest, modelId: string): Promise<T> {
+export async function localJson<T>(req: JsonRequest, modelId: string, onPartial?: (raw: string) => void): Promise<T> {
   const eng = await loadBrain(modelId)
-  return runLocalJson<T>(eng as unknown as EngineLike, req)
+  return runLocalJson<T>(eng as unknown as EngineLike, req, onPartial)
 }

@@ -8,7 +8,7 @@ import { go } from '../lib/router'
 import { SKILL_BY_ID } from '../lib/skills'
 import { NoSpeechError, speak, startListening, stopSpeaking, unlockAudio, type Listening } from '../lib/speech'
 import { getProfile, logPracticeTime, type Settings } from '../lib/store'
-import { applyTurnEvidence, finishPlacement, finishPractice, runTurn } from '../lib/tutor'
+import { applyTurnEvidence, finishPlacement, finishPractice, runTurn, translateLine } from '../lib/tutor'
 
 type Phase = 'starting' | 'idle' | 'recording' | 'transcribing' | 'thinking' | 'speaking' | 'ending'
 
@@ -121,6 +121,9 @@ export default function Conversation({
   const [reveal, setReveal] = useState<Record<number, { text?: boolean; roman?: boolean; english?: boolean }>>({})
   const [placementReady, setPlacementReady] = useState(false)
   const [micLevel, setMicLevel] = useState(0)
+  /** Rani's reply while her correction is still being written (on-phone brain). */
+  const [early, setEarly] = useState<string | null>(null)
+  const [translating, setTranslating] = useState<number | null>(null)
   const listenRef = useRef<Listening | null>(null)
   const settingsRef = useRef(settings)
   settingsRef.current = settings
@@ -145,30 +148,64 @@ export default function Conversation({
   const raniTurn = async (sess: Session): Promise<void> => {
     setPhase('thinking')
     setError(null)
+    setEarly(null)
+    // Rani starts talking as soon as her reply is known; the correction follows.
+    let speech: Promise<string | undefined> | null = null
+    const startSpeaking = (text: string) => {
+      if (speech || !settingsRef.current.autoSpeak) return
+      speech = speak(text, lang, settingsRef.current)
+    }
     let res
     try {
-      res = await runTurn(sess, settingsRef.current)
+      res = await runTurn(sess, settingsRef.current, {
+        onReply: (reply) => {
+          setEarly(reply)
+          startSpeaking(reply)
+        },
+      })
     } catch (e) {
+      stopSpeaking()
+      setEarly(null)
       setPhase('idle')
       setError({ msg: errMsg(e), retry: () => void raniTurn(sess) })
       return
     }
-    const turns = [...sess.turns]
+    const base = sessionRef.current ?? sess
+    const turns = [...base.turns]
     const last = turns.at(-1)
     if (last?.role === 'user') turns[turns.length - 1] = { ...last, correction: res.correction, evidence: res.evidence }
     turns.push({ role: 'rani', text: res.reply, roman: res.roman, english: res.english, at: Date.now() })
-    const next = { ...sess, turns }
+    const next = { ...base, turns }
+    setEarly(null)
     await persist(next)
     await applyTurnEvidence(next, res.evidence)
     timer.touch()
     if (res.placementComplete) setPlacementReady(true)
-    if (settingsRef.current.autoSpeak) {
+    startSpeaking(res.reply)
+    if (speech) {
       setPhase('speaking')
-      const ttsNotice = await speak(res.reply, lang, settingsRef.current)
+      const ttsNotice = await speech
       if (ttsNotice) setNotice(ttsNotice)
     }
     if (phaseRef.current === 'speaking' || phaseRef.current === 'thinking') setPhase('idle')
     timer.touch()
+  }
+
+  /** Fetch English + romanisation for one of Rani's lines when EN / Aa is tapped. */
+  const ensureTranslation = async (i: number) => {
+    const t = sessionRef.current?.turns[i]
+    if (!t || (t.english && t.roman) || translating != null) return
+    setTranslating(i)
+    try {
+      const tr = await translateLine(t.text, settingsRef.current)
+      const cur = sessionRef.current!
+      const turns = [...cur.turns]
+      turns[i] = { ...turns[i], english: turns[i].english || tr.english, roman: turns[i].roman || tr.roman }
+      await persist({ ...cur, turns })
+    } catch (e) {
+      setNotice(`Couldn't translate: ${errMsg(e)}`)
+    }
+    setTranslating(null)
   }
 
   const userSays = async (text: string, via: 'voice' | 'text') => {
@@ -360,7 +397,11 @@ export default function Conversation({
               hidden={hideText && !reveal[i]?.text}
               showRoman={settings.showRomanDefault !== !!reveal[i]?.roman}
               showEnglish={!!reveal[i]?.english}
-              onToggle={(k) => toggle(i, k)}
+              translating={translating === i}
+              onToggle={(k) => {
+                toggle(i, k)
+                if ((k === 'english' && !t.english) || (k === 'roman' && !t.roman)) void ensureTranslation(i)
+              }}
               onReplay={() => {
                 timer.touch()
                 void speak(t.text, lang, settings)
@@ -370,7 +411,17 @@ export default function Conversation({
             <UserBubble key={i} turn={t} evaluated={i < turns.length - 1} lang={lang} settings={settings} />
           ),
         )}
-        {(phase === 'thinking' || phase === 'starting') && (
+        {early && phase === 'thinking' && (
+          <div className="bubble rani">
+            <p className="devanagari" lang="hi">
+              {early}
+            </p>
+            <p className="checking">
+              <Spinner /> Checking your Hindi…
+            </p>
+          </div>
+        )}
+        {(phase === 'thinking' || phase === 'starting') && !early && (
           <div className="bubble rani typing" aria-label="Rani is typing">
             <span />
             <span />
@@ -453,7 +504,7 @@ export default function Conversation({
             <p className="status">Loading Rani's brain… {Math.round(brain.progress * 100)}%</p>
           </div>
         ) : (
-          <p className="status">{STATUS[phase]}</p>
+          <p className="status">{early && phase === 'thinking' ? 'Rani is speaking · checking your Hindi…' : STATUS[phase]}</p>
         )}
       </footer>
 
@@ -473,6 +524,7 @@ function RaniBubble({
   hidden,
   showRoman,
   showEnglish,
+  translating,
   onToggle,
   onReplay,
 }: {
@@ -480,6 +532,7 @@ function RaniBubble({
   hidden: boolean
   showRoman: boolean
   showEnglish: boolean
+  translating: boolean
   onToggle: (k: 'text' | 'roman' | 'english') => void
   onReplay: () => void
 }) {
@@ -490,6 +543,7 @@ function RaniBubble({
       </p>
       {!hidden && showRoman && turn.roman && <p className="roman">{turn.roman}</p>}
       {!hidden && showEnglish && turn.english && <p className="english">{turn.english}</p>}
+      {!hidden && translating && (showEnglish || showRoman) && <p className="english">Translating…</p>}
       <div className="bubble-tools">
         <button type="button" onClick={onReplay} aria-label="Play again">
           <Icon name="speaker" size={16} />
@@ -500,11 +554,9 @@ function RaniBubble({
           </button>
         ) : (
           <>
-            {turn.roman && (
-              <button type="button" aria-pressed={showRoman} onClick={() => onToggle('roman')}>
-                Aa
-              </button>
-            )}
+            <button type="button" aria-pressed={showRoman} onClick={() => onToggle('roman')}>
+              Aa
+            </button>
             <button type="button" aria-pressed={showEnglish} onClick={() => onToggle('english')}>
               EN
             </button>

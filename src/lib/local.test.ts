@@ -11,7 +11,7 @@ describe('on-phone brain', () => {
     const js = toJsonSchema(LOCAL_TURN_SCHEMA) as { type: string; properties: Record<string, { type: string }>; required: string[] }
     expect(js.type).toBe('object')
     expect(js.properties.correction.type).toBe('object')
-    expect(js.properties.evidence.type).toBe('array')
+    expect(js.properties.used.type).toBe('string')
     expect(js.required).toContain('reply')
     expect(JSON.stringify(js)).not.toMatch(/OBJECT|STRING|propertyOrdering/)
   })

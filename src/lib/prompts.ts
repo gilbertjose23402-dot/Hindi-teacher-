@@ -254,15 +254,16 @@ function localExample(s: Settings): string {
   const went = fem ? 'गई' : 'गया'
   const youWent = fem ? 'गईं' : 'गए'
   return `Example — learner says: कल मैंने बाज़ार ${went}।
-{"correction":{"needed":true,"you_said":"कल मैंने बाज़ार ${went}।","better":"कल मैं बाज़ार ${went}।","rule":"जाना is intransitive, so the subject does not take ने."},"evidence":[{"skill":"ne_construction","correct":false}],"reply":"अच्छा, आप कल बाज़ार ${youWent}! आपने वहाँ क्या ख़रीदा?","reply_english":"Oh, you went to the market yesterday! What did you buy there?","placement_complete":false}`
+{"reply":"अच्छा, आप कल बाज़ार ${youWent}! आपने वहाँ क्या ख़रीदा?","correction":{"better":"कल मैं बाज़ार ${went}।","rule":"जाना is intransitive, so the subject does not take ने.","skill":"ne_construction"},"used":"past_intransitive"}
+Example — learner says: मैं रोज़ कोर्ट जाता हूँ।
+{"reply":"बहुत अच्छा! कोर्ट में आपका दिन कैसा होता है?","correction":{"better":"","rule":"","skill":"none"},"used":"present_tense"}`
 }
 
-const LOCAL_TURN_RULES = (skillIds: string) => `Reply ONLY with JSON:
-- "correction": look at the learner's LAST message. If it has a Hindi grammar mistake: needed=true, you_said = their sentence, better = the corrected Hindi sentence, rule = ONE short English sentence explaining why. If it is correct, or it is "[Session start]": needed=false and "" for the others. Ignore spelling and punctuation.
-- "evidence": grammar skills the learner used in that message, like [{"skill":"present_tense","correct":true}]. Skill ids: ${skillIds}. Use [] if unsure.
-- "reply": your next message as Rani in simple, natural Hindi (Devanagari only), 1–2 short sentences, ending with a question. If there was a mistake, use the correct form naturally in your reply.
-- "reply_english": English translation of reply.
-- "placement_complete": false.`
+const LOCAL_TURN_RULES = (skillIds: string) => `Reply ONLY with JSON, in this order:
+- "reply": your next message as Rani in simple, natural Hindi (Devanagari only), 1–2 SHORT sentences, ending with a question. If the learner made a mistake, use the correct form naturally in your reply.
+- "correction": if the learner's LAST message has a Hindi grammar mistake: better = the corrected Hindi sentence, rule = ONE short English sentence explaining why, skill = the grammar skill id. If it is correct (or it is "[Session start]"): better "", rule "", skill "none". Ignore spelling and punctuation.
+- "used": the main grammar skill id the learner's message used, or "none".
+Skill ids: ${skillIds}.`
 
 export function practiceSystemLocal(s: Settings, p: Profile, focusId: string, topicId: string): string {
   const focus = SKILL_BY_ID[focusId]
@@ -289,20 +290,15 @@ ${localExample(s)}`
 export const LOCAL_TURN_SCHEMA: Schema = {
   type: 'OBJECT',
   properties: {
+    reply: { type: 'STRING' },
     correction: {
       type: 'OBJECT',
-      properties: { needed: { type: 'BOOLEAN' }, you_said: { type: 'STRING' }, better: { type: 'STRING' }, rule: { type: 'STRING' } },
-      required: ['needed', 'you_said', 'better', 'rule'],
+      properties: { better: { type: 'STRING' }, rule: { type: 'STRING' }, skill: { type: 'STRING', enum: [...SKILL_IDS, 'none'] } },
+      required: ['better', 'rule', 'skill'],
     },
-    evidence: {
-      type: 'ARRAY',
-      items: { type: 'OBJECT', properties: { skill: { type: 'STRING', enum: SKILL_IDS }, correct: { type: 'BOOLEAN' } }, required: ['skill', 'correct'] },
-    },
-    reply: { type: 'STRING' },
-    reply_english: { type: 'STRING' },
-    placement_complete: { type: 'BOOLEAN' },
+    used: { type: 'STRING', enum: [...SKILL_IDS, 'none'] },
   },
-  required: ['correction', 'evidence', 'reply', 'reply_english', 'placement_complete'],
+  required: ['reply', 'correction', 'used'],
 }
 
 export function recapSystemLocal(s: Settings, p: Profile): string {
@@ -366,4 +362,14 @@ export const LOCAL_ASSESSMENT_SCHEMA: Schema = {
     tutor_notes: { type: 'STRING' },
   },
   required: ['skills', 'strengths', 'weaknesses', 'summary', 'tutor_notes'],
+}
+
+export const TRANSLATE_SCHEMA: Schema = {
+  type: 'OBJECT',
+  properties: { english: { type: 'STRING' }, roman: { type: 'STRING' } },
+  required: ['english', 'roman'],
+}
+
+export function translateSystem(): string {
+  return 'Translate the Hindi or Marathi text into natural English ("english") and give a simple romanised transliteration ("roman"). Reply ONLY with JSON.'
 }

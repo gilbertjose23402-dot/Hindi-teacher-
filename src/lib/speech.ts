@@ -326,25 +326,42 @@ function chunks(text: string): string[] {
   return out.filter((p) => p.trim())
 }
 
-// ----- Web Audio playback for Gemini voice -----
+// ----- Gemini voice playback -----
+// One shared <audio> element. Android lets installed web apps autoplay media,
+// and the element is also unlocked on the first tap, so replies play by themselves.
 
-let audioCtx: AudioContext | null = null
-let currentSource: AudioBufferSourceNode | null = null
-const audioCache = new Map<string, AudioBuffer>()
+let player: HTMLAudioElement | null = null
+let unlocked = false
+let finishCurrent: (() => void) | null = null
+const audioCache = new Map<string, Promise<Blob>>()
 let geminiVoicePausedUntil = 0
 
-function ctx(): AudioContext {
-  if (!audioCtx || audioCtx.state === 'closed') audioCtx = new AudioContext()
-  return audioCtx
+const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
+
+class AutoplayBlockedError extends Error {}
+
+function getPlayer(): HTMLAudioElement {
+  if (!player) {
+    player = new Audio()
+    player.preload = 'auto'
+  }
+  return player
 }
 
-/** Call from a tap so Android lets the page play audio later. */
+/** Call from a tap: lets later replies play without a tap. Cheap no-op once unlocked. */
 export function unlockAudio(): void {
+  if (unlocked || finishCurrent) return
   try {
-    const c = ctx()
-    if (c.state === 'suspended') void c.resume()
+    const p = getPlayer()
+    p.src = SILENT_WAV
+    void p
+      .play()
+      .then(() => {
+        unlocked = true
+      })
+      .catch(() => {})
   } catch {
-    /* no Web Audio */
+    /* no audio element support */
   }
 }
 
@@ -355,37 +372,64 @@ function base64ToBytes(b64: string): Uint8Array {
   return out
 }
 
-async function toAudioBuffer(data: string, mimeType: string): Promise<AudioBuffer> {
-  const bytes = base64ToBytes(data)
-  const c = ctx()
-  if (/L16|pcm/i.test(mimeType)) {
-    const rate = Number(mimeType.match(/rate=(\d+)/)?.[1] ?? 24000)
-    const samples = Math.floor(bytes.length / 2)
-    const view = new DataView(bytes.buffer, bytes.byteOffset, samples * 2)
-    const buf = c.createBuffer(1, Math.max(1, samples), rate)
-    const ch = buf.getChannelData(0)
-    for (let i = 0; i < samples; i++) ch[i] = view.getInt16(i * 2, true) / 32768
-    return buf
-  }
-  return c.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer)
+/** Wrap raw 16-bit mono PCM (what Gemini returns) in a WAV header. */
+export function pcmToWav(pcm: Uint8Array, rate: number): Blob {
+  const h = new DataView(new ArrayBuffer(44))
+  const w = (o: number, str: string) => [...str].forEach((c, i) => h.setUint8(o + i, c.charCodeAt(0)))
+  w(0, 'RIFF')
+  h.setUint32(4, 36 + pcm.length, true)
+  w(8, 'WAVE')
+  w(12, 'fmt ')
+  h.setUint32(16, 16, true)
+  h.setUint16(20, 1, true)
+  h.setUint16(22, 1, true)
+  h.setUint32(24, rate, true)
+  h.setUint32(28, rate * 2, true)
+  h.setUint16(32, 2, true)
+  h.setUint16(34, 16, true)
+  w(36, 'data')
+  h.setUint32(40, pcm.length, true)
+  return new Blob([h.buffer, pcm as BlobPart], { type: 'audio/wav' })
 }
 
-function playBuffer(buf: AudioBuffer, token: number): Promise<void> {
-  return new Promise((resolve) => {
+function toBlob(data: string, mimeType: string): Blob {
+  const bytes = base64ToBytes(data)
+  if (/L16|pcm/i.test(mimeType)) return pcmToWav(bytes, Number(mimeType.match(/rate=(\d+)/)?.[1] ?? 24000))
+  return new Blob([bytes as BlobPart], { type: mimeType.split(';')[0] })
+}
+
+function playBlob(blob: Blob, token: number): Promise<void> {
+  return new Promise((resolve, reject) => {
     if (token !== speakToken) return resolve()
-    const c = ctx()
-    if (c.state === 'suspended') void c.resume()
-    const src = c.createBufferSource()
-    src.buffer = buf
-    src.connect(c.destination)
-    currentSource = src
-    const guard = setTimeout(resolve, buf.duration * 1000 + 1500)
-    src.onended = () => {
+    const p = getPlayer()
+    const url = URL.createObjectURL(blob)
+    let guard = 0
+    const finish = () => {
+      if (finishCurrent !== finish) return
+      finishCurrent = null
       clearTimeout(guard)
-      if (currentSource === src) currentSource = null
+      p.onended = p.onerror = null
+      URL.revokeObjectURL(url)
       resolve()
     }
-    src.start()
+    finishCurrent = finish
+    guard = window.setTimeout(finish, 90_000)
+    p.onended = finish
+    p.onerror = finish
+    p.src = url
+    p.play()
+      .then(() => {
+        unlocked = true
+        clearTimeout(guard)
+        const ms = Number.isFinite(p.duration) ? p.duration * 1000 : 60_000
+        guard = window.setTimeout(finish, ms + 2000)
+      })
+      .catch((e: unknown) => {
+        if (finishCurrent === finish) finishCurrent = null
+        clearTimeout(guard)
+        URL.revokeObjectURL(url)
+        reject((e as { name?: string })?.name === 'NotAllowedError' ? new AutoplayBlockedError('blocked') : e)
+      })
   })
 }
 
@@ -395,16 +439,17 @@ function paceWords(rate: number): string {
   return 'at a natural conversational pace'
 }
 
-async function geminiAudioFor(text: string, s: SpeakSettings): Promise<AudioBuffer> {
+/** Gemini audio for a line, shared by everyone asking for the same line (no double requests). */
+function geminiAudioFor(text: string, s: SpeakSettings): Promise<Blob> {
   const style = `Say this in a warm, friendly female voice, ${paceWords(s.speechRate)}`
   const key = `${s.geminiTtsModel}|${s.geminiVoice}|${style}|${text}`
   const hit = audioCache.get(key)
   if (hit) return hit
-  const audio = await geminiSpeech(text, s.geminiKey, s.geminiTtsModel, s.geminiVoice, style)
-  const buf = await toAudioBuffer(audio.data, audio.mimeType)
-  audioCache.set(key, buf)
+  const pending = geminiSpeech(text, s.geminiKey, s.geminiTtsModel, s.geminiVoice, style).then((a) => toBlob(a.data, a.mimeType))
+  audioCache.set(key, pending)
+  pending.catch(() => audioCache.delete(key))
   if (audioCache.size > 40) audioCache.delete(audioCache.keys().next().value!)
-  return buf
+  return pending
 }
 
 // ----- Public speak / stop -----
@@ -414,12 +459,10 @@ let speakToken = 0
 export function stopSpeaking(): void {
   speakToken++
   if (ttsAvailable()) speechSynthesis.cancel()
-  try {
-    currentSource?.stop()
-  } catch {
-    /* already stopped */
+  if (player && finishCurrent) {
+    player.pause()
+    finishCurrent()
   }
-  currentSource = null
 }
 
 async function speakWithPhone(text: string, lang: Lang, s: SpeakSettings, token: number): Promise<void> {
@@ -456,16 +499,20 @@ export async function speak(text: string, lang: Lang, s: SpeakSettings): Promise
   let notice: string | undefined
   if (s.ttsEngine === 'gemini' && s.geminiKey && Date.now() >= geminiVoicePausedUntil) {
     try {
-      const buf = await geminiAudioFor(clean, s)
-      await playBuffer(buf, token)
+      const blob = await geminiAudioFor(clean, s)
+      await playBlob(blob, token)
       return
     } catch (e) {
-      const limit = e instanceof ApiError && e.status === 429
-      // Don't keep hitting a rate limit: use the phone voice for a while.
-      geminiVoicePausedUntil = Date.now() + (limit ? 10 * 60_000 : 60_000)
-      notice = limit
-        ? "Gemini's free voice limit is reached — using the phone voice for now."
-        : `Gemini voice unavailable (${(e as Error).message}) — using the phone voice.`
+      if (e instanceof AutoplayBlockedError) {
+        notice = 'Your phone stopped Rani’s voice from playing by itself. Tap anywhere on the screen once — after that she speaks automatically.'
+      } else {
+        const limit = e instanceof ApiError && e.status === 429
+        // Don't keep hitting a rate limit: use the phone voice for a while.
+        geminiVoicePausedUntil = Date.now() + (limit ? 10 * 60_000 : 60_000)
+        notice = limit
+          ? "Gemini's free voice limit is reached — using the phone voice for now."
+          : `Gemini voice unavailable (${(e as Error).message}) — using the phone voice.`
+      }
     }
   }
   if (token !== speakToken) return notice

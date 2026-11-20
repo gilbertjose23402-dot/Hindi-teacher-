@@ -91,21 +91,49 @@ function mergeRoles(msgs: ChatMsg[]): ChatMsg[] {
   return out
 }
 
+/** Models that rejected our "don't think" setting; we stop sending it to them. */
+const thinkingConfigRejected = new Set<string>()
+
+/**
+ * Rani's tasks (transcribing, short replies) don't need Gemini's "thinking",
+ * which adds seconds per call. Turn it down where the model allows it.
+ */
+function fastThinking(model: string): Record<string, unknown> | undefined {
+  if (thinkingConfigRejected.has(model) || /tts|pro/.test(model)) return undefined
+  if (/gemini-2\.5-flash/.test(model)) return { thinkingBudget: 0 }
+  if (/gemini-[3-9]/.test(model) && /flash/.test(model)) return { thinkingLevel: 'minimal' }
+  return undefined
+}
+
+async function geminiGenerate(model: string, key: string, body: { generationConfig?: Record<string, unknown> } & Record<string, unknown>) {
+  const post = (b: unknown) =>
+    doFetch('gemini', `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify(b),
+    })
+  const thinking = fastThinking(model)
+  if (thinking) {
+    try {
+      return await (await post({ ...body, generationConfig: { ...body.generationConfig, thinkingConfig: thinking } })).json()
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 400)) throw e
+      thinkingConfigRejected.add(model) // this model doesn't accept it — retry without
+    }
+  }
+  return (await post(body)).json()
+}
+
 async function geminiJson<T>(req: JsonRequest, key: string, model: string): Promise<T> {
-  const res = await doFetch('gemini', `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: req.system }] },
-      contents: mergeRoles(req.messages).map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
-      generationConfig: {
-        responseMimeType: 'application/json',
-        responseSchema: req.schema,
-        temperature: req.temperature ?? 0.7,
-      },
-    }),
+  const data = await geminiGenerate(model, key, {
+    systemInstruction: { parts: [{ text: req.system }] },
+    contents: mergeRoles(req.messages).map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: req.schema,
+      temperature: req.temperature ?? 0.7,
+    },
   })
-  const data = await res.json()
   const cand = data.candidates?.[0]
   const text: string = (cand?.content?.parts ?? [])
     .filter((p: { thought?: boolean; text?: string }) => !p.thought && p.text)
@@ -165,9 +193,17 @@ export function isOnDevice(p: LlmProvider): boolean {
  * Ask the primary brain for JSON; if it fails, try the other configured ones
  * (on-phone model, Gemini, Groq — whichever are set up).
  */
-export async function generateJson<T>(source: JsonRequestSource, s: Settings): Promise<{ data: T; provider: LlmProvider }> {
+export interface GenerateOptions {
+  /** Called with the growing raw output while the on-phone model writes (streaming). */
+  onPartial?: (raw: string) => void
+  /** Small side tasks (e.g. a translation): use a cloud key first if there is one, for speed. */
+  preferCloud?: boolean
+}
+
+export async function generateJson<T>(source: JsonRequestSource, s: Settings, opts: GenerateOptions = {}): Promise<{ data: T; provider: LlmProvider }> {
   const all: LlmProvider[] = ['builtin', 'local', 'gemini', 'groq']
-  const order = [s.llmPrimary, ...all.filter((p) => p !== s.llmPrimary)]
+  const first: LlmProvider[] = opts.preferCloud ? ['gemini', 'groq', s.llmPrimary] : [s.llmPrimary]
+  const order = [...first, ...all.filter((p) => !first.includes(p))]
   const usable = order.filter((p) => providerAvailable(s, p))
   if (usable.length === 0) throw new ApiError('none', "Rani's brain isn't set up yet. Download it in Settings → Rani's brain (or add a Gemini key).")
   let lastErr: unknown
@@ -176,9 +212,9 @@ export async function generateJson<T>(source: JsonRequestSource, s: Settings): P
     try {
       const data =
         p === 'builtin'
-          ? await builtinJson<T>(req, s.builtinAiHindi)
+          ? await builtinJson<T>(req, s.builtinAiHindi, opts.onPartial)
           : p === 'local'
-          ? await localJson<T>(req, s.localModel)
+          ? await localJson<T>(req, s.localModel, opts.onPartial)
           : p === 'gemini'
             ? await geminiJson<T>(req, s.geminiKey, s.geminiModel)
             : await groqJson<T>(req, s.groqKey, s.groqModel)
@@ -268,10 +304,7 @@ export function pickWhisperModel(models: string[]): string {
 // ---------- Gemini audio transcription (no Groq key needed) ----------
 
 export async function geminiTranscribe(wavBase64: string, langName: string, key: string, model: string): Promise<string> {
-  const res = await doFetch('gemini', `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-    body: JSON.stringify({
+  const data = await geminiGenerate(model, key, {
       contents: [
         {
           role: 'user',
@@ -287,9 +320,7 @@ export async function geminiTranscribe(wavBase64: string, langName: string, key:
         },
       ],
       generationConfig: { temperature: 0 },
-    }),
   })
-  const data = await res.json()
   return ((data.candidates?.[0]?.content?.parts ?? []) as { text?: string; thought?: boolean }[])
     .filter((p) => !p.thought)
     .map((p) => p.text ?? '')
@@ -339,4 +370,15 @@ export async function geminiSpeech(text: string, key: string, model: string, voi
   const part = ((data.candidates?.[0]?.content?.parts ?? []) as { inlineData?: GeminiAudio }[]).find((p) => p.inlineData?.data)
   if (!part?.inlineData) throw new ApiError('gemini', 'Gemini returned no audio.', undefined, true)
   return part.inlineData
+}
+
+/** Pull the finished "reply" string out of a JSON answer that is still being written. */
+export function extractPartialReply(raw: string): string | null {
+  const m = raw.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+  if (!m) return null
+  try {
+    return (JSON.parse(`"${m[1]}"`) as string).trim() || null
+  } catch {
+    return null
+  }
 }

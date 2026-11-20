@@ -5,6 +5,7 @@ import { hasLlm } from '../lib/llm'
 import { TOPICS } from '../lib/prompts'
 import { go } from '../lib/router'
 import { HINDI_SKILLS, LEVEL_LABEL, SKILL_BY_ID, levelFromScore, overallScore, pickFocus } from '../lib/skills'
+import { unlockAudio } from '../lib/speech'
 import { useProfile, useTimeEntries, type Settings } from '../lib/store'
 
 export default function Home({ settings }: { settings: Settings }) {
@@ -78,7 +79,10 @@ export default function Home({ settings }: { settings: Settings }) {
         {!profile.placementDone ? (
           <div className="stack">
             <p>Start with a relaxed ~10 minute chat. Rani will find your level and the grammar points to work on.</p>
-            <button type="button" className="btn primary big" disabled={!hasLlm(settings)} onClick={() => go('/talk/hi/placement')}>
+            <button type="button" className="btn primary big" disabled={!hasLlm(settings)} onClick={() => {
+                unlockAudio()
+                go('/talk/hi/placement')
+              }}>
               <Icon name="mic" /> Start placement chat
             </button>
           </div>
@@ -113,7 +117,10 @@ export default function Home({ settings }: { settings: Settings }) {
               type="button"
               className="btn primary big"
               disabled={!hasLlm(settings)}
-              onClick={() => go(`/talk/hi/practice?focus=${focus}&topic=${topic}`)}
+              onClick={() => {
+                unlockAudio()
+                go(`/talk/hi/practice?focus=${focus}&topic=${topic}`)
+              }}
             >
               <Icon name="mic" /> Talk with Rani
             </button>

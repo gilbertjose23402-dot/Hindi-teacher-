@@ -1228,3 +1228,17 @@ details.optional[open] summary {
   border-radius: 12px;
   padding: 12px;
 }
+
+.checking {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.checking .spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}

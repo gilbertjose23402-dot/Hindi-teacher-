@@ -97,7 +97,7 @@ export function KeySetup({ settings, compact = false }: { settings: Settings; co
         settings.geminiModel !== DEFAULT_SETTINGS.geminiModel && models.includes(settings.geminiModel) ? settings.geminiModel : pickGeminiModel(models)
       const tts = geminiTtsModels(models).includes(settings.geminiTtsModel) ? settings.geminiTtsModel : pickGeminiTtsModel(models)
       await saveSettings({ ...(chat ? { geminiModel: chat } : {}), ...(tts ? { geminiTtsModel: tts } : {}) })
-      setGem({ status: 'ok', msg: `Key works. Brain: ${chat}. Voice: ${tts ?? 'not available — phone voice will be used'}.`, models })
+      setGem({ status: 'ok', msg: `Key works. Listening: ${chat}. Voice: ${tts ?? 'not available — phone voice will be used'}.`, models })
     } catch (e) {
       setGem({ status: 'error', msg: (e as Error).message })
     }

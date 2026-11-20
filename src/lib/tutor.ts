@@ -1,11 +1,12 @@
 import { db, type Card, type Correction, type Evidence, type PlacementResult, type Recap, type Session } from '../db'
-import { generateJson, isOnDevice, type ChatMsg, type JsonRequest } from './llm'
+import { extractPartialReply, generateJson, isOnDevice, type ChatMsg, type JsonRequest } from './llm'
 import {
   ASSESSMENT_SCHEMA,
   LOCAL_ASSESSMENT_SCHEMA,
   LOCAL_RECAP_SCHEMA,
   LOCAL_TURN_SCHEMA,
   RECAP_SCHEMA,
+  TRANSLATE_SCHEMA,
   TURN_SCHEMA,
   assessmentSystem,
   assessmentSystemLocal,
@@ -15,6 +16,7 @@ import {
   practiceSystemLocal,
   recapSystem,
   recapSystemLocal,
+  translateSystem,
 } from './prompts'
 import { HINDI_SKILLS, SKILL_BY_ID, applyEvidence, clampScore } from './skills'
 import { getProfile, getSettings, updateProfile, type Profile, type Settings } from './store'
@@ -95,20 +97,68 @@ export function normalizeTurn(raw: RawTurn): TurnResult {
   }
 }
 
+/** The on-phone model's short answer: reply first, correction only when needed. */
+interface RawLocalTurn {
+  reply?: string
+  correction?: { better?: string; rule?: string; skill?: string }
+  used?: string
+}
+
+/** Expand the on-phone model's short answer into the full turn format. */
+export function fromLocalTurn(raw: RawLocalTurn | RawTurn, learnerSaid: string): RawTurn {
+  if (!('used' in raw) && 'evidence' in raw) return raw as RawTurn // already full format (cloud fallback)
+  const r = raw as RawLocalTurn
+  const better = (r.correction?.better ?? '').trim()
+  const skill = r.correction?.skill && r.correction.skill !== 'none' ? r.correction.skill : undefined
+  const needed = !!better && better !== learnerSaid.trim()
+  const evidence: { skill: string; correct: boolean }[] = []
+  if (needed && skill) evidence.push({ skill, correct: false })
+  // The skill they mainly used counts as correct, unless it is the one the mistake was in
+  // (or the mistake wasn't labelled, so we can't tell).
+  if (r.used && r.used !== 'none' && !(needed && r.used === skill)) evidence.push({ skill: r.used, correct: !(needed && !skill) })
+  return {
+    reply: r.reply,
+    correction: { needed, you_said: learnerSaid, better, rule: r.correction?.rule ?? '', tip: '', skill },
+    evidence,
+    placement_complete: false,
+  }
+}
+
+export interface TurnOptions {
+  /** Fires as soon as Rani's reply text is known — before the correction is finished. */
+  onReply?: (reply: string) => void
+}
+
 /** Ask Rani for her next turn given the session so far. */
-export async function runTurn(session: Session, s: Settings): Promise<TurnResult> {
+export async function runTurn(session: Session, s: Settings, opts: TurnOptions = {}): Promise<TurnResult> {
   const profile = sessionProfile(await getProfile(session.lang), session)
   const learnerMsgs = session.turns.filter((t) => t.role === 'user').length
+  const lastLearner = [...session.turns].reverse().find((t) => t.role === 'user')?.text ?? ''
   const focus = session.focus ?? HINDI_SKILLS[0].id
-  const { data, provider } = await generateJson<RawTurn>((p): JsonRequest => {
-    if (isOnDevice(p)) {
-      const system = session.kind === 'placement' ? placementSystemLocal(s) : practiceSystemLocal(s, profile, focus, session.topic)
-      return { system, messages: toMessages(session, true), schema: LOCAL_TURN_SCHEMA, temperature: 0.6, maxTokens: 320 }
-    }
-    const system = session.kind === 'placement' ? placementSystem(s, learnerMsgs) : practiceSystem(s, profile, focus, session.topic)
-    return { system, messages: toMessages(session), schema: TURN_SCHEMA, temperature: 0.7 }
-  }, s)
-  const turn = normalizeTurn(data)
+  let announced = false
+  const onPartial = opts.onReply
+    ? (raw: string) => {
+        if (announced) return
+        const reply = extractPartialReply(raw)
+        if (reply) {
+          announced = true
+          opts.onReply!(reply)
+        }
+      }
+    : undefined
+  const { data, provider } = await generateJson<RawTurn | RawLocalTurn>(
+    (p): JsonRequest => {
+      if (isOnDevice(p)) {
+        const system = session.kind === 'placement' ? placementSystemLocal(s) : practiceSystemLocal(s, profile, focus, session.topic)
+        return { system, messages: toMessages(session, true), schema: LOCAL_TURN_SCHEMA, temperature: 0.6, maxTokens: 160 }
+      }
+      const system = session.kind === 'placement' ? placementSystem(s, learnerMsgs) : practiceSystem(s, profile, focus, session.topic)
+      return { system, messages: toMessages(session), schema: TURN_SCHEMA, temperature: 0.7 }
+    },
+    s,
+    { onPartial },
+  )
+  const turn = normalizeTurn(isOnDevice(provider) ? fromLocalTurn(data, lastLearner) : (data as RawTurn))
   if (session.kind === 'placement') {
     const modelSaysDone = !isOnDevice(provider) && turn.placementComplete
     turn.placementComplete = (modelSaysDone && learnerMsgs >= PLACEMENT_MIN) || learnerMsgs >= (isOnDevice(provider) ? 10 : PLACEMENT_MAX)
@@ -234,4 +284,14 @@ export async function finishPlacement(sessionId: number): Promise<Session> {
     })
   })
   return (await db.sessions.get(sessionId))!
+}
+
+/** English translation + romanisation for one of Rani's lines (the EN / Aa buttons). Uses a cloud key first when available. */
+export async function translateLine(text: string, s: Settings): Promise<{ english: string; roman: string }> {
+  const { data } = await generateJson<{ english?: string; roman?: string }>(
+    { system: translateSystem(), messages: [{ role: 'user', text }], schema: TRANSLATE_SCHEMA, temperature: 0.2, maxTokens: 200 },
+    s,
+    { preferCloud: true },
+  )
+  return { english: (data.english ?? '').trim(), roman: (data.roman ?? '').trim() }
 }

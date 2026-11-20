@@ -10,6 +10,7 @@ type Availability = 'unavailable' | 'downloadable' | 'downloading' | 'available'
 
 interface LMSession {
   prompt(input: string, opts?: { responseConstraint?: object }): Promise<string>
+  promptStreaming?(input: string, opts?: { responseConstraint?: object }): AsyncIterable<string>
   destroy(): void
 }
 
@@ -66,8 +67,8 @@ async function createSession(hindi: boolean, initialPrompts: { role: string; con
   })
 }
 
-/** Run one JSON request on the built-in model (a fresh session per request). */
-export async function builtinJson<T>(req: JsonRequest, hindi: boolean): Promise<T> {
+/** Run one JSON request on the built-in model (a fresh session per request), streaming when possible. */
+export async function builtinJson<T>(req: JsonRequest, hindi: boolean, onPartial?: (raw: string) => void): Promise<T> {
   const history = req.messages.map((m) => ({ role: m.role === 'model' ? 'assistant' : 'user', content: m.text }))
   let last = history.pop()
   if (!last || last.role !== 'user') {
@@ -76,7 +77,17 @@ export async function builtinJson<T>(req: JsonRequest, hindi: boolean): Promise<
   }
   const session = await createSession(hindi, [{ role: 'system', content: req.system }, ...history])
   try {
-    const raw = await session.prompt(last.content, { responseConstraint: toJsonSchema(req.schema) })
+    const opts = { responseConstraint: toJsonSchema(req.schema) }
+    let raw = ''
+    if (onPartial && session.promptStreaming) {
+      for await (const chunk of session.promptStreaming(last.content, opts)) {
+        // Older Chrome versions send the whole text so far; newer ones send just the new piece.
+        raw = raw && chunk.startsWith(raw) ? chunk : raw + chunk
+        onPartial(raw)
+      }
+    } else {
+      raw = await session.prompt(last.content, opts)
+    }
     return parseJsonLoose<T>(raw)
   } finally {
     reportBrainProgress(null)
