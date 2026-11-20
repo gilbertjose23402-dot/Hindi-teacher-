@@ -15,6 +15,8 @@ export interface Settings {
   geminiKey: string
   groqKey: string
   geminiModel: string
+  /** Other Gemini models to try when the main one is overloaded or rate-limited. */
+  geminiBackupModels: string[]
   groqModel: string
   whisperModel: string
   llmPrimary: LlmProvider
@@ -51,6 +53,7 @@ export const DEFAULT_SETTINGS: Settings = {
   geminiKey: '',
   groqKey: '',
   geminiModel: 'gemini-2.5-flash',
+  geminiBackupModels: [],
   groqModel: 'llama-3.3-70b-versatile',
   whisperModel: 'whisper-large-v3',
   llmPrimary: 'local',

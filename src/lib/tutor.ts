@@ -1,5 +1,5 @@
 import { db, type Card, type Correction, type Evidence, type PlacementResult, type Recap, type Session } from '../db'
-import { extractPartialField, extractPartialReply, generateJson, geminiJson, isOnDevice, type ChatMsg, type JsonRequest } from './llm'
+import { extractPartialField, extractPartialReply, generateJson, geminiJson, isOnDevice, withGeminiModel, type ChatMsg, type JsonRequest } from './llm'
 import {
   ASSESSMENT_SCHEMA,
   FAST_AUDIO_RULES,
@@ -329,10 +329,11 @@ export async function runFastTurn(
   ]
   let sentTranscript = false
   let sentReply = false
-  const data = await geminiJson<RawTurn & { transcript?: string }>(
+  const data = await withGeminiModel(s, (model) =>
+    geminiJson<RawTurn & { transcript?: string }>(
     { system: `${base}\n\n${FAST_AUDIO_RULES}`, messages, schema: FAST_TURN_SCHEMA, temperature: 0.6 },
     s.geminiKey,
-    s.geminiModel,
+    model,
     (raw) => {
       if (!sentTranscript && opts.onTranscript) {
         const t = extractPartialField(raw, 'transcript')
@@ -349,6 +350,7 @@ export async function runFastTurn(
         }
       }
     },
+  ),
   )
   const turn = normalizeTurn(data)
   if (session.kind === 'placement') {

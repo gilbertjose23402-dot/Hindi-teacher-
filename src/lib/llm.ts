@@ -54,6 +54,7 @@ function friendly(provider: string, status: number, body: string): ApiError {
   if (status === 401 || status === 403) return new ApiError(provider, `${name} rejected the API key. Check it in Settings.`, status)
   if (status === 404) return new ApiError(provider, `${name} model not found. Pick another model in Settings.`, status, true)
   if (status === 429) return new ApiError(provider, `${name} free-tier limit reached. Wait a minute and try again.`, status, true)
+  if (status === 503) return new ApiError(provider, `${name}'s servers are overloaded right now (503) — this is on Google's side.`, status, true)
   if (status >= 500) return new ApiError(provider, `${name} is having trouble right now (${status}).`, status, true)
   return new ApiError(provider, `${name} error ${status}: ${body.slice(0, 200)}`, status)
 }
@@ -67,6 +68,23 @@ async function doFetch(provider: string, url: string, init: RequestInit): Promis
   }
   if (!res.ok) throw friendly(provider, res.status, await res.text().catch(() => ''))
   return res
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** Google's "overloaded" errors usually clear within seconds: retry them twice before giving up on a model. */
+export const RETRY_DELAYS_MS = [700, 1800]
+
+async function fetchWithRetry(provider: string, url: string, init: RequestInit): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await doFetch(provider, url, init)
+    } catch (e) {
+      const transient = e instanceof ApiError && !!e.status && [500, 502, 503, 504].includes(e.status)
+      if (!transient || attempt >= RETRY_DELAYS_MS.length) throw e
+      await sleep(RETRY_DELAYS_MS[attempt])
+    }
+  }
 }
 
 export function parseJsonLoose<T>(text: string): T {
@@ -160,7 +178,7 @@ async function readGeminiStream(res: Response, onText: (full: string) => void) {
 async function geminiGenerate(model: string, key: string, body: GeminiBody, onText?: (full: string) => void) {
   const method = onText ? 'streamGenerateContent?alt=sse' : 'generateContent'
   const post = async (b: unknown) => {
-    const res = await doFetch('gemini', `${GEMINI_BASE}/models/${encodeURIComponent(model)}:${method}`, {
+    const res = await fetchWithRetry('gemini', `${GEMINI_BASE}/models/${encodeURIComponent(model)}:${method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify(b),
@@ -280,7 +298,7 @@ export async function generateJson<T>(source: JsonRequestSource, s: Settings, op
           : p === 'local'
           ? await localJson<T>(req, s.localModel, opts.onPartial)
           : p === 'gemini'
-            ? await geminiJson<T>(req, s.geminiKey, s.geminiModel, opts.onPartial)
+            ? await withGeminiModel(s, (model) => geminiJson<T>(req, s.geminiKey, model, opts.onPartial))
             : await groqJson<T>(req, s.groqKey, s.groqModel)
       return { data, provider: p }
     } catch (e) {
@@ -419,7 +437,7 @@ export interface GeminiAudio {
 }
 
 export async function geminiSpeech(text: string, key: string, model: string, voice: string, style: string): Promise<GeminiAudio> {
-  const res = await doFetch('gemini', `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+  const res = await fetchWithRetry('gemini', `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
@@ -450,4 +468,67 @@ export function extractPartialField(raw: string, field: string): string | null {
   } catch {
     return null
   }
+}
+
+// ---------- Backup Gemini models ----------
+
+/** Used when the key hasn't been re-tested since backups were added. Missing ones are skipped (404). */
+export const DEFAULT_GEMINI_BACKUPS = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite']
+
+/** Main model first, then up to three backups. Each model has its own free allowance. */
+export function geminiModelChain(s: Pick<Settings, 'geminiModel' | 'geminiBackupModels'>): string[] {
+  const backups = s.geminiBackupModels?.length ? s.geminiBackupModels : DEFAULT_GEMINI_BACKUPS
+  return [...new Set([s.geminiModel, ...backups].filter(Boolean))].slice(0, 4)
+}
+
+/** Backups for a key: other stable Flash models, newest first, Flash-Lite last. */
+export function pickGeminiBackups(all: string[], main: string): string[] {
+  const chat = geminiChatModels(all).filter((n) => n !== main && /flash/.test(n) && !/preview|exp/.test(n))
+  const newest = (list: string[]) => [...list].sort((a, b) => versionOf(b) - versionOf(a))
+  return [...newest(chat.filter((n) => !/lite/.test(n))), ...newest(chat.filter((n) => /lite/.test(n)))].slice(0, 3)
+}
+
+const MODEL_SWITCH_STATUSES = [404, 429, 500, 502, 503, 504]
+
+/**
+ * Run a Gemini call on the main model; if it is overloaded, rate-limited or
+ * missing, try the backups in turn. Other errors (bad key…) stop immediately.
+ */
+/** Models that were just overloaded/rate-limited: skipped for a while so replies don't wait on them. */
+const resting = new Map<string, number>()
+export function clearRestingModels(): void {
+  resting.clear()
+}
+
+export async function withGeminiModel<T>(s: Pick<Settings, 'geminiModel' | 'geminiBackupModels'>, run: (model: string) => Promise<T>): Promise<T> {
+  const all = geminiModelChain(s)
+  const now = Date.now()
+  const awake = all.filter((m) => (resting.get(m) ?? 0) <= now)
+  // Rested models go last rather than being dropped, in case every model is resting.
+  const chain = [...awake, ...all.filter((m) => !awake.includes(m))]
+  let last: unknown
+  let busy = false
+  for (const model of chain) {
+    try {
+      const out = await run(model)
+      resting.delete(model)
+      return out
+    } catch (e) {
+      last = e
+      if (!(e instanceof ApiError && e.status && MODEL_SWITCH_STATUSES.includes(e.status))) throw e
+      if (e.status !== 404) {
+        busy = true
+        resting.set(model, Date.now() + (e.status === 429 ? 60_000 : 120_000))
+      }
+    }
+  }
+  if (busy) {
+    throw new ApiError(
+      'gemini',
+      `Google's Gemini servers are busy right now (tried ${chain.length} models). This is on Google's side — tap Retry in a few seconds.`,
+      (last as ApiError).status,
+      true,
+    )
+  }
+  throw last
 }

@@ -1,5 +1,5 @@
 import type { Lang } from '../db'
-import { ApiError, geminiSpeech, geminiTranscribe, groqTranscribe } from './llm'
+import { ApiError, geminiSpeech, geminiTranscribe, groqTranscribe, withGeminiModel } from './llm'
 import type { Settings, SttEngine } from './store'
 
 export const LANG_TAG: Record<Lang, string> = { hi: 'hi-IN', mr: 'mr-IN' }
@@ -37,7 +37,10 @@ export async function startListening(s: Settings, lang: Lang): Promise<Listening
       const { blob, durationMs, peak } = await rec.stop()
       if (durationMs < 600 || peak < 0.02) throw new NoSpeechError("I didn't hear anything — tap the mic and speak.")
       const viaGroq = () => groqTranscribe(blob, lang, s.groqKey, s.whisperModel)
-      const viaGemini = async () => geminiTranscribe(await blobToWavBase64(blob), LANG_NAME[lang], s.geminiKey, s.geminiModel)
+      const viaGemini = async () => {
+        const wav = await blobToWavBase64(blob)
+        return withGeminiModel(s, (model) => geminiTranscribe(wav, LANG_NAME[lang], s.geminiKey, model))
+      }
       const [first, backup] = engine === 'groq' ? [viaGroq, s.geminiKey ? viaGemini : null] : [viaGemini, s.groqKey ? viaGroq : null]
       try {
         return await first()
