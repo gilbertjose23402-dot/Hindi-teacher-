@@ -17,6 +17,8 @@ export interface Schema {
 export interface ChatMsg {
   role: 'user' | 'model'
   text: string
+  /** Optional recording sent with the message (fast mode: Gemini hears the learner directly). */
+  audio?: { mimeType: string; data: string }
 }
 
 export interface JsonRequest {
@@ -84,8 +86,10 @@ function mergeRoles(msgs: ChatMsg[]): ChatMsg[] {
   const out: ChatMsg[] = []
   for (const m of msgs) {
     const prev = out.at(-1)
-    if (prev && prev.role === m.role) prev.text += '\n\n' + m.text
-    else out.push({ ...m })
+    if (prev && prev.role === m.role) {
+      prev.text += '\n\n' + m.text
+      if (m.audio) prev.audio = m.audio
+    } else out.push({ ...m })
   }
   if (out.length === 0 || out[0].role !== 'user') out.unshift({ role: 'user', text: '[Start]' })
   return out
@@ -105,35 +109,95 @@ function fastThinking(model: string): Record<string, unknown> | undefined {
   return undefined
 }
 
-async function geminiGenerate(model: string, key: string, body: { generationConfig?: Record<string, unknown> } & Record<string, unknown>) {
-  const post = (b: unknown) =>
-    doFetch('gemini', `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent`, {
+type GeminiBody = { generationConfig?: Record<string, unknown> } & Record<string, unknown>
+
+/** Read a Server-Sent-Events Gemini stream, calling onText with the text so far. */
+async function readGeminiStream(res: Response, onText: (full: string) => void) {
+  let full = ''
+  let finishReason: string | undefined
+  let blockReason: string | undefined
+  const handleLine = (line: string) => {
+    const t = line.trim()
+    if (!t.startsWith('data:')) return
+    let ev: { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[]; promptFeedback?: { blockReason?: string } }
+    try {
+      ev = JSON.parse(t.slice(5))
+    } catch {
+      return
+    }
+    const cand = ev.candidates?.[0]
+    for (const part of cand?.content?.parts ?? []) {
+      if (part.text && !part.thought) {
+        full += part.text
+        onText(full)
+      }
+    }
+    finishReason = cand?.finishReason ?? finishReason
+    blockReason = ev.promptFeedback?.blockReason ?? blockReason
+  }
+  if (res.body) {
+    const reader = res.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let nl: number
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        handleLine(buf.slice(0, nl))
+        buf = buf.slice(nl + 1)
+      }
+    }
+    if (buf) handleLine(buf)
+  } else {
+    ;(await res.text()).split('\n').forEach(handleLine)
+  }
+  // Same shape as a normal (non-streamed) response.
+  return { candidates: [{ content: { parts: full ? [{ text: full }] : [] }, finishReason }], promptFeedback: { blockReason } }
+}
+
+async function geminiGenerate(model: string, key: string, body: GeminiBody, onText?: (full: string) => void) {
+  const method = onText ? 'streamGenerateContent?alt=sse' : 'generateContent'
+  const post = async (b: unknown) => {
+    const res = await doFetch('gemini', `${GEMINI_BASE}/models/${encodeURIComponent(model)}:${method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify(b),
     })
+    return onText ? readGeminiStream(res, onText) : res.json()
+  }
   const thinking = fastThinking(model)
   if (thinking) {
     try {
-      return await (await post({ ...body, generationConfig: { ...body.generationConfig, thinkingConfig: thinking } })).json()
+      return await post({ ...body, generationConfig: { ...body.generationConfig, thinkingConfig: thinking } })
     } catch (e) {
       if (!(e instanceof ApiError && e.status === 400)) throw e
       thinkingConfigRejected.add(model) // this model doesn't accept it — retry without
     }
   }
-  return (await post(body)).json()
+  return post(body)
 }
 
-async function geminiJson<T>(req: JsonRequest, key: string, model: string): Promise<T> {
-  const data = await geminiGenerate(model, key, {
-    systemInstruction: { parts: [{ text: req.system }] },
-    contents: mergeRoles(req.messages).map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: req.schema,
-      temperature: req.temperature ?? 0.7,
+/** One JSON request to Gemini (streamed when onPartial is given). Messages may carry audio. */
+export async function geminiJson<T>(req: JsonRequest, key: string, model: string, onPartial?: (raw: string) => void): Promise<T> {
+  const data = await geminiGenerate(
+    model,
+    key,
+    {
+      systemInstruction: { parts: [{ text: req.system }] },
+      contents: mergeRoles(req.messages).map((m) => ({
+        role: m.role,
+        parts: m.audio ? [{ inlineData: { mimeType: m.audio.mimeType, data: m.audio.data } }, { text: m.text }] : [{ text: m.text }],
+      })),
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: req.schema,
+        temperature: req.temperature ?? 0.7,
+      },
     },
-  })
+    onPartial,
+  )
   const cand = data.candidates?.[0]
   const text: string = (cand?.content?.parts ?? [])
     .filter((p: { thought?: boolean; text?: string }) => !p.thought && p.text)
@@ -216,7 +280,7 @@ export async function generateJson<T>(source: JsonRequestSource, s: Settings, op
           : p === 'local'
           ? await localJson<T>(req, s.localModel, opts.onPartial)
           : p === 'gemini'
-            ? await geminiJson<T>(req, s.geminiKey, s.geminiModel)
+            ? await geminiJson<T>(req, s.geminiKey, s.geminiModel, opts.onPartial)
             : await groqJson<T>(req, s.groqKey, s.groqModel)
       return { data, provider: p }
     } catch (e) {
@@ -374,7 +438,12 @@ export async function geminiSpeech(text: string, key: string, model: string, voi
 
 /** Pull the finished "reply" string out of a JSON answer that is still being written. */
 export function extractPartialReply(raw: string): string | null {
-  const m = raw.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"/)
+  return extractPartialField(raw, 'reply')
+}
+
+/** Pull a finished top-level string field (e.g. "transcript", "reply") out of JSON still being written. */
+export function extractPartialField(raw: string, field: string): string | null {
+  const m = raw.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`))
   if (!m) return null
   try {
     return (JSON.parse(`"${m[1]}"`) as string).trim() || null

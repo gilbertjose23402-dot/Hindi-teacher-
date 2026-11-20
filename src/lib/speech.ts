@@ -50,6 +50,27 @@ export async function startListening(s: Settings, lang: Lang): Promise<Listening
   }
 }
 
+/** A recording handed to Gemini as audio (fast mode). */
+export interface AudioCapture {
+  /** Stop and return 16 kHz mono WAV as base64. */
+  finish(): Promise<string>
+  cancel(): void
+  level(): number
+}
+
+export async function startAudioCapture(): Promise<AudioCapture> {
+  const rec = await startRecording()
+  return {
+    level: rec.level,
+    cancel: rec.cancel,
+    async finish() {
+      const { blob, durationMs, peak } = await rec.stop()
+      if (durationMs < 600 || peak < 0.02) throw new NoSpeechError("I didn't hear anything — tap the mic and speak.")
+      return blobToWavBase64(blob)
+    },
+  }
+}
+
 // ---------- MediaRecorder ----------
 
 interface Recording {

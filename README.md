@@ -45,6 +45,18 @@ Honest expectations: on a phone, replies take roughly 10–40 s, and small model
 A free Gemini key (Settings → *Optional cloud AI*) gives replies in a few seconds and far more reliable corrections.
 If the main brain fails, Rani automatically tries any other brain you've set up.
 
+### ⚡ Fast mode (Gemini for everything)
+
+With a Gemini key, **Settings → Rani's brain → ⚡ Use Gemini for everything** turns on fast mode:
+
+- Your recording goes straight to Gemini, which writes down exactly what you said (mistakes kept), corrects it and
+  replies — **one call** instead of separate listening and thinking calls.
+- The answer is streamed: your words appear first, and Rani starts speaking as soon as her reply is written.
+- Gemini runs with "thinking" turned down, and the voice uses Gemini 3.8 Flash-Lite TTS (built for real-time).
+- Two Gemini calls per turn (hear+answer, voice). The on-phone model stays as an automatic backup.
+
+Typical delay from the end of your sentence to Rani's voice: about 2–3 s (depends on your connection).
+
 ## Setup on your phone
 
 1. Open the app link in **Chrome on Android**: `https://gilbertjose23402-dot.github.io/Hindi-teacher-/`

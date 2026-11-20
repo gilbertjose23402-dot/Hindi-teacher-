@@ -147,7 +147,7 @@ export const TURN_SCHEMA: Schema = {
     placement_complete: { type: 'BOOLEAN' },
   },
   required: ['correction', 'evidence', 'reply', 'reply_roman', 'reply_english', 'placement_complete'],
-  propertyOrdering: ['correction', 'evidence', 'reply', 'reply_roman', 'reply_english', 'placement_complete'],
+  propertyOrdering: ['correction', 'reply', 'evidence', 'reply_roman', 'reply_english', 'placement_complete'],
 }
 
 export function recapSystem(s: Settings, p: Profile): string {
@@ -372,4 +372,20 @@ export const TRANSLATE_SCHEMA: Schema = {
 
 export function translateSystem(): string {
   return 'Translate the Hindi or Marathi text into natural English ("english") and give a simple romanised transliteration ("roman"). Reply ONLY with JSON.'
+}
+
+// ---------------------------------------------------------------------------
+// Fast mode: Gemini hears the learner's recording and answers in one call.
+// ---------------------------------------------------------------------------
+
+export const FAST_AUDIO_RULES = `FAST MODE — the learner's latest message is an AUDIO recording (attached), not text.
+- First fill "transcript" with EXACTLY what they said, in Devanagari (English words may stay in Latin script). Keep every grammatical mistake exactly as spoken — never fix gender, verb endings, ने, postpositions or word order in the transcript. It must be what was SAID, not what should have been said.
+- If you hear no speech, set transcript to "" and reply (in Hindi) asking them to say it again.
+- Then judge the transcript and correct it exactly as described above (you_said = the erroneous sentence taken from the transcript).`
+
+export const FAST_TURN_SCHEMA: Schema = {
+  ...TURN_SCHEMA,
+  properties: { transcript: { type: 'STRING' }, ...TURN_SCHEMA.properties },
+  required: ['transcript', ...(TURN_SCHEMA.required ?? [])],
+  propertyOrdering: ['transcript', ...(TURN_SCHEMA.propertyOrdering ?? [])],
 }

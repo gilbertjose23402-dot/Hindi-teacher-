@@ -1242,3 +1242,7 @@ details.optional[open] summary {
   height: 14px;
   border-width: 2px;
 }
+
+.bubble.user.pending {
+  opacity: 0.6;
+}

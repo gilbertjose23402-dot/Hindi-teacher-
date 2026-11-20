@@ -6,6 +6,7 @@ import { dayKey } from '../lib/dates'
 import { browserRecognitionAvailable } from '../lib/speech'
 import { PROVIDER_NAME, providerAvailable } from '../lib/llm'
 import { saveSettings, type LlmProvider, type Settings as S } from '../lib/store'
+import { isFastMode } from '../lib/tutor'
 
 export default function Settings({ settings }: { settings: S }) {
   const [includeKeys, setIncludeKeys] = useState(false)
@@ -79,6 +80,17 @@ export default function Settings({ settings }: { settings: S }) {
           />
           <p className="hint">If the main brain fails, Rani automatically tries the others you've set up.</p>
         </div>
+        {settings.geminiKey &&
+          (isFastMode(settings) ? (
+            <p className="ok-text">⚡ Fast mode is on — Gemini hears, corrects and answers you in one step.</p>
+          ) : (
+            <div className="field">
+              <button type="button" className="btn primary" onClick={() => saveSettings({ llmPrimary: 'gemini', sttEngine: 'gemini', ttsEngine: 'gemini' })}>
+                ⚡ Use Gemini for everything (fastest)
+              </button>
+              <p className="hint">Gemini listens, thinks and speaks — replies start in about 2–3 seconds. Your on-phone model stays as a backup.</p>
+            </div>
+          ))}
         <BrainSetup settings={settings} />
       </section>
 

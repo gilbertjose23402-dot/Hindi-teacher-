@@ -6,9 +6,9 @@ import { useBrainProgress } from '../lib/local'
 import { TOPIC_BY_ID } from '../lib/prompts'
 import { go } from '../lib/router'
 import { SKILL_BY_ID } from '../lib/skills'
-import { NoSpeechError, speak, startListening, stopSpeaking, unlockAudio, type Listening } from '../lib/speech'
+import { NoSpeechError, speak, startAudioCapture, startListening, stopSpeaking, unlockAudio, type AudioCapture, type Listening } from '../lib/speech'
 import { getProfile, logPracticeTime, type Settings } from '../lib/store'
-import { applyTurnEvidence, finishPlacement, finishPractice, runTurn, translateLine } from '../lib/tutor'
+import { applyTurnEvidence, finishPlacement, finishPractice, isFastMode, runFastTurn, runTurn, translateLine, type TurnResult } from '../lib/tutor'
 
 type Phase = 'starting' | 'idle' | 'recording' | 'transcribing' | 'thinking' | 'speaking' | 'ending'
 
@@ -124,7 +124,11 @@ export default function Conversation({
   /** Rani's reply while her correction is still being written (on-phone brain). */
   const [early, setEarly] = useState<string | null>(null)
   const [translating, setTranslating] = useState<number | null>(null)
-  const listenRef = useRef<Listening | null>(null)
+  const listenRef = useRef<Listening | AudioCapture | null>(null)
+  /** True while the current recording is going straight to Gemini (fast mode). */
+  const fastRef = useRef(false)
+  /** What the learner said, while fast mode is still hearing it ('' = not yet known). */
+  const [pendingUser, setPendingUser] = useState<string | null>(null)
   const settingsRef = useRef(settings)
   settingsRef.current = settings
   const started = useRef(false)
@@ -145,50 +149,102 @@ export default function Conversation({
     if (next.id != null) await db.sessions.update(next.id, { turns: next.turns })
   }
 
+  /** Rani speaks as soon as her reply is known; one voice per turn. */
+  const makeSpeaker = () => {
+    let promise: Promise<string | undefined> | null = null
+    return {
+      start(text: string) {
+        if (!promise && settingsRef.current.autoSpeak) promise = speak(text, lang, settingsRef.current)
+      },
+      get promise() {
+        return promise
+      },
+    }
+  }
+
+  const failTurn = (e: unknown, retry: () => void) => {
+    stopSpeaking()
+    setEarly(null)
+    setPendingUser(null)
+    setPhase('idle')
+    setError({ msg: errMsg(e), retry })
+  }
+
+  /** Save the finished turn, update skills, and let Rani finish speaking. */
+  const completeTurn = async (next: Session, res: TurnResult, speaker: ReturnType<typeof makeSpeaker>) => {
+    setEarly(null)
+    await persist(next)
+    await applyTurnEvidence(next, res.evidence)
+    timer.touch()
+    if (res.placementComplete) setPlacementReady(true)
+    speaker.start(res.reply)
+    if (speaker.promise) {
+      setPhase('speaking')
+      const ttsNotice = await speaker.promise
+      if (ttsNotice) setNotice(ttsNotice)
+    }
+    if (phaseRef.current === 'speaking' || phaseRef.current === 'thinking') setPhase('idle')
+    timer.touch()
+  }
+
+  /** Rani answers the conversation so far (typed messages, and the separate-listening path). */
   const raniTurn = async (sess: Session): Promise<void> => {
     setPhase('thinking')
     setError(null)
     setEarly(null)
-    // Rani starts talking as soon as her reply is known; the correction follows.
-    let speech: Promise<string | undefined> | null = null
-    const startSpeaking = (text: string) => {
-      if (speech || !settingsRef.current.autoSpeak) return
-      speech = speak(text, lang, settingsRef.current)
-    }
-    let res
+    const speaker = makeSpeaker()
+    let res: TurnResult
     try {
       res = await runTurn(sess, settingsRef.current, {
         onReply: (reply) => {
           setEarly(reply)
-          startSpeaking(reply)
+          speaker.start(reply)
         },
       })
     } catch (e) {
-      stopSpeaking()
-      setEarly(null)
-      setPhase('idle')
-      setError({ msg: errMsg(e), retry: () => void raniTurn(sess) })
-      return
+      return failTurn(e, () => void raniTurn(sess))
     }
     const base = sessionRef.current ?? sess
     const turns = [...base.turns]
     const last = turns.at(-1)
     if (last?.role === 'user') turns[turns.length - 1] = { ...last, correction: res.correction, evidence: res.evidence }
     turns.push({ role: 'rani', text: res.reply, roman: res.roman, english: res.english, at: Date.now() })
-    const next = { ...base, turns }
+    await completeTurn({ ...base, turns }, res, speaker)
+  }
+
+  /** Fast mode: one Gemini call hears the recording, corrects it and answers. */
+  const fastTurn = async (wav: string): Promise<void> => {
+    const sess = sessionRef.current
+    if (!sess) return
+    setPhase('thinking')
+    setError(null)
     setEarly(null)
-    await persist(next)
-    await applyTurnEvidence(next, res.evidence)
-    timer.touch()
-    if (res.placementComplete) setPlacementReady(true)
-    startSpeaking(res.reply)
-    if (speech) {
-      setPhase('speaking')
-      const ttsNotice = await speech
-      if (ttsNotice) setNotice(ttsNotice)
+    setPendingUser('')
+    const speaker = makeSpeaker()
+    let res: TurnResult & { transcript: string }
+    try {
+      res = await runFastTurn(sess, wav, settingsRef.current, {
+        onTranscript: (t) => setPendingUser(t),
+        onReply: (reply) => {
+          setEarly(reply)
+          speaker.start(reply)
+        },
+      })
+    } catch (e) {
+      return failTurn(e, () => void fastTurn(wav))
     }
-    if (phaseRef.current === 'speaking' || phaseRef.current === 'thinking') setPhase('idle')
-    timer.touch()
+    setPendingUser(null)
+    if (!res.transcript) {
+      stopSpeaking()
+      setEarly(null)
+      setPhase('idle')
+      setNotice("I didn't catch that — tap the mic and try again.")
+      return
+    }
+    const base = sessionRef.current ?? sess
+    const userTurn: Turn = { role: 'user', text: res.transcript, via: 'voice', at: Date.now(), correction: res.correction, evidence: res.evidence }
+    const raniLine: Turn = { role: 'rani', text: res.reply, roman: res.roman, english: res.english, at: Date.now() }
+    await completeTurn({ ...base, turns: [...base.turns, userTurn, raniLine] }, res, speaker)
   }
 
   /** Fetch English + romanisation for one of Rani's lines when EN / Aa is tapped. */
@@ -267,6 +323,17 @@ export default function Conversation({
       const h = listenRef.current
       listenRef.current = null
       if (!h) return
+      if (fastRef.current) {
+        setPhase('thinking')
+        try {
+          await fastTurn(await h.finish())
+        } catch (e) {
+          setPhase('idle')
+          if (e instanceof NoSpeechError) setNotice(e.message)
+          else setError({ msg: errMsg(e) })
+        }
+        return
+      }
       setPhase('transcribing')
       try {
         const text = (await h.finish()).trim()
@@ -284,7 +351,8 @@ export default function Conversation({
     setError(null)
     setNotice(null)
     try {
-      listenRef.current = await startListening(settingsRef.current, lang)
+      fastRef.current = isFastMode(settingsRef.current)
+      listenRef.current = fastRef.current ? await startAudioCapture() : await startListening(settingsRef.current, lang)
       setPhase('recording')
     } catch (e) {
       setPhase('idle')
@@ -346,10 +414,12 @@ export default function Conversation({
 
   const turns = session?.turns ?? []
   const learnerCount = turns.filter((t) => t.role === 'user').length
+  const fast = isFastMode(settings)
   const subtitle =
-    kind === 'placement'
+    (fast ? '⚡ ' : '') +
+    (kind === 'placement'
       ? `Placement chat · ${learnerCount}/~12 answers`
-      : `${SKILL_BY_ID[focus ?? '']?.name ?? 'Free talk'} · ${TOPIC_BY_ID[topic]?.label ?? ''}`
+      : `${SKILL_BY_ID[focus ?? '']?.name ?? 'Free talk'} · ${TOPIC_BY_ID[topic]?.label ?? ''}`)
   const mins = Math.floor(timer.seconds / 60)
   const secs = String(timer.seconds % 60).padStart(2, '0')
   const canEnd = phase === 'idle' || phase === 'speaking' || phase === 'recording'
@@ -410,6 +480,13 @@ export default function Conversation({
           ) : (
             <UserBubble key={i} turn={t} evaluated={i < turns.length - 1} lang={lang} settings={settings} />
           ),
+        )}
+        {pendingUser !== null && (
+          <div className="user-wrap">
+            <div className={'bubble user' + (pendingUser ? '' : ' pending')}>
+              <p lang="hi">{pendingUser || '…'}</p>
+            </div>
+          </div>
         )}
         {early && phase === 'thinking' && (
           <div className="bubble rani">
@@ -504,7 +581,13 @@ export default function Conversation({
             <p className="status">Loading Rani's brain… {Math.round(brain.progress * 100)}%</p>
           </div>
         ) : (
-          <p className="status">{early && phase === 'thinking' ? 'Rani is speaking · checking your Hindi…' : STATUS[phase]}</p>
+          <p className="status">
+            {early && phase === 'thinking'
+              ? 'Rani is speaking · checking your Hindi…'
+              : pendingUser === '' && phase === 'thinking'
+                ? 'Rani is listening…'
+                : STATUS[phase]}
+          </p>
         )}
       </footer>
 

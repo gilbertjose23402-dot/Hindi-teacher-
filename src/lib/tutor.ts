@@ -1,7 +1,9 @@
 import { db, type Card, type Correction, type Evidence, type PlacementResult, type Recap, type Session } from '../db'
-import { extractPartialReply, generateJson, isOnDevice, type ChatMsg, type JsonRequest } from './llm'
+import { extractPartialField, extractPartialReply, generateJson, geminiJson, isOnDevice, type ChatMsg, type JsonRequest } from './llm'
 import {
   ASSESSMENT_SCHEMA,
+  FAST_AUDIO_RULES,
+  FAST_TURN_SCHEMA,
   LOCAL_ASSESSMENT_SCHEMA,
   LOCAL_RECAP_SCHEMA,
   LOCAL_TURN_SCHEMA,
@@ -294,4 +296,65 @@ export async function translateLine(text: string, s: Settings): Promise<{ englis
     { preferCloud: true },
   )
   return { english: (data.english ?? '').trim(), roman: (data.roman ?? '').trim() }
+}
+
+/** Fast mode: Gemini is the brain AND the listener, so one call can hear and answer. */
+export function isFastMode(s: Settings): boolean {
+  return !!s.geminiKey && s.llmPrimary === 'gemini' && s.sttEngine === 'gemini'
+}
+
+export interface FastTurnOptions extends TurnOptions {
+  /** Fires as soon as Gemini has written down what the learner said. */
+  onTranscript?: (text: string) => void
+}
+
+/**
+ * Fast mode turn: the learner's recording goes straight to Gemini, which
+ * transcribes it (mistakes kept), corrects it and replies — streamed, so the
+ * transcript and reply can be shown/spoken before the answer is complete.
+ */
+export async function runFastTurn(
+  session: Session,
+  wavBase64: string,
+  s: Settings,
+  opts: FastTurnOptions = {},
+): Promise<TurnResult & { transcript: string }> {
+  const profile = sessionProfile(await getProfile(session.lang), session)
+  const learnerMsgs = session.turns.filter((t) => t.role === 'user').length + 1
+  const focus = session.focus ?? HINDI_SKILLS[0].id
+  const base = session.kind === 'placement' ? placementSystem(s, learnerMsgs) : practiceSystem(s, profile, focus, session.topic)
+  const messages: ChatMsg[] = [
+    ...toMessages(session),
+    { role: 'user', text: '[The learner spoke — see the attached recording.]', audio: { mimeType: 'audio/wav', data: wavBase64 } },
+  ]
+  let sentTranscript = false
+  let sentReply = false
+  const data = await geminiJson<RawTurn & { transcript?: string }>(
+    { system: `${base}\n\n${FAST_AUDIO_RULES}`, messages, schema: FAST_TURN_SCHEMA, temperature: 0.6 },
+    s.geminiKey,
+    s.geminiModel,
+    (raw) => {
+      if (!sentTranscript && opts.onTranscript) {
+        const t = extractPartialField(raw, 'transcript')
+        if (t) {
+          sentTranscript = true
+          opts.onTranscript(t)
+        }
+      }
+      if (!sentReply && opts.onReply) {
+        const r = extractPartialReply(raw)
+        if (r) {
+          sentReply = true
+          opts.onReply(r)
+        }
+      }
+    },
+  )
+  const turn = normalizeTurn(data)
+  if (session.kind === 'placement') {
+    turn.placementComplete = (turn.placementComplete && learnerMsgs >= PLACEMENT_MIN) || learnerMsgs >= PLACEMENT_MAX
+  } else {
+    turn.placementComplete = false
+  }
+  return { ...turn, transcript: (data.transcript ?? '').trim() }
 }
