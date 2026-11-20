@@ -39,7 +39,10 @@ export interface Settings {
   settingsVersion: number
 }
 
-const SETTINGS_VERSION = 3
+const SETTINGS_VERSION = 4
+
+/** Google retired these voice models on Nov 17, 2026. */
+const RETIRED_TTS = /^(gemini-2\.5-(flash|pro)-preview-tts|gemini-3\.1-flash-tts-preview)$/
 
 export const DEFAULT_SETTINGS: Settings = {
   onboarded: false,
@@ -57,7 +60,7 @@ export const DEFAULT_SETTINGS: Settings = {
   builtinAiHindi: false,
   sttEngine: 'browser',
   ttsEngine: 'browser',
-  geminiTtsModel: 'gemini-2.5-flash-preview-tts',
+  geminiTtsModel: 'gemini-3.8-flash-lite-tts',
   geminiVoice: 'Kore',
   voiceHi: '',
   voiceMr: '',
@@ -101,6 +104,8 @@ export async function getSettings(): Promise<Settings> {
   // v3: the phone does listening, speaking and the AI brain by default; Gemini and Groq are optional.
   const migrated: Partial<Settings> =
     (stored.settingsVersion ?? 1) < 3 ? { sttEngine: 'browser', ttsEngine: 'browser', llmPrimary: 'local', settingsVersion: SETTINGS_VERSION } : {}
+  // v4: move off voice models Google shut down.
+  if (stored.geminiTtsModel && RETIRED_TTS.test(stored.geminiTtsModel)) migrated.geminiTtsModel = DEFAULT_SETTINGS.geminiTtsModel
   return { ...DEFAULT_SETTINGS, ...stored, ...migrated }
 }
 

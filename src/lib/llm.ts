@@ -207,8 +207,15 @@ export function geminiChatModels(models: string[]): string[] {
   return models.filter((n) => !/(tts|image|embed|live|audio|vision|robotics|computer)/i.test(n))
 }
 
+/** Voice models Google has shut down (Nov 17, 2026) — never offer or use these. */
+export const RETIRED_TTS = /^(gemini-2\.5-(flash|pro)-preview-tts|gemini-3\.1-flash-tts-preview)$/
+
+export function isRetiredTts(model: string): boolean {
+  return RETIRED_TTS.test(model)
+}
+
 export function geminiTtsModels(models: string[]): string[] {
-  return models.filter((n) => /tts/i.test(n))
+  return models.filter((n) => /tts/i.test(n) && !isRetiredTts(n))
 }
 
 function versionOf(name: string): number {
@@ -225,12 +232,21 @@ export function pickGeminiModel(all: string[]): string | undefined {
   return rank(stable) ?? (models.includes('gemini-flash-latest') ? 'gemini-flash-latest' : undefined) ?? rank(flash) ?? models[0]
 }
 
-/** Prefer a stable flash TTS model, else the newest flash preview, else any TTS model. */
+/**
+ * Rani is a live conversation, so prefer the newest stable Flash-Lite voice
+ * (built for real-time agents), then the newest stable Flash voice, then
+ * previews. Retired models are never picked.
+ */
 export function pickGeminiTtsModel(all: string[]): string | undefined {
   const tts = geminiTtsModels(all)
-  const byVersion = (list: string[]) => [...list].sort((a, b) => versionOf(b) - versionOf(a))[0]
-  const flash = tts.filter((n) => /flash/.test(n))
-  return byVersion(flash.filter((n) => !/preview|exp/.test(n))) ?? byVersion(flash) ?? byVersion(tts)
+  const newest = (list: string[]) => [...list].sort((a, b) => versionOf(b) - versionOf(a))[0]
+  const stable = tts.filter((n) => !/preview|exp/.test(n))
+  return (
+    newest(stable.filter((n) => /flash-lite/.test(n))) ??
+    newest(stable.filter((n) => /flash/.test(n))) ??
+    newest(tts.filter((n) => /flash/.test(n))) ??
+    newest(tts)
+  )
 }
 
 export async function listGroqModels(key: string): Promise<string[]> {

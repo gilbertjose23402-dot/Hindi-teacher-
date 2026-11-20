@@ -25,7 +25,7 @@ import {
 } from '../lib/local'
 import { GEMINI_VOICES, LANG_NAME, loadVoices, speak, ttsAvailable, unlockAudio, voicesFor } from '../lib/speech'
 import { builtinJson, checkBuiltinAi, type BuiltinStatus } from '../lib/builtin'
-import { saveSettings, type Settings } from '../lib/store'
+import { DEFAULT_SETTINGS, saveSettings, type Settings } from '../lib/store'
 import { Segmented, Spinner } from './ui'
 
 type TestState = { status: 'idle' | 'testing' | 'ok' | 'error'; msg?: string; models?: string[] }
@@ -92,8 +92,10 @@ export function KeySetup({ settings, compact = false }: { settings: Settings; co
     setGem({ status: 'testing' })
     try {
       const models = await listGeminiModels(key)
-      const chat = models.includes(settings.geminiModel) ? settings.geminiModel : pickGeminiModel(models)
-      const tts = models.includes(settings.geminiTtsModel) ? settings.geminiTtsModel : pickGeminiTtsModel(models)
+      // Keep a model the learner chose; upgrade the untouched default to the newest stable Flash.
+      const chat =
+        settings.geminiModel !== DEFAULT_SETTINGS.geminiModel && models.includes(settings.geminiModel) ? settings.geminiModel : pickGeminiModel(models)
+      const tts = geminiTtsModels(models).includes(settings.geminiTtsModel) ? settings.geminiTtsModel : pickGeminiTtsModel(models)
       await saveSettings({ ...(chat ? { geminiModel: chat } : {}), ...(tts ? { geminiTtsModel: tts } : {}) })
       setGem({ status: 'ok', msg: `Key works. Brain: ${chat}. Voice: ${tts ?? 'not available — phone voice will be used'}.`, models })
     } catch (e) {
@@ -134,9 +136,9 @@ export function KeySetup({ settings, compact = false }: { settings: Settings; co
       />
       {gem.models && gem.models.length > 0 && (
         <>
-          <ModelSelect label="Gemini model (brain & listening)" value={settings.geminiModel} models={geminiChatModels(gem.models)} onChange={(m) => saveSettings({ geminiModel: m })} />
+          <ModelSelect label="Gemini model (listening — and the brain if you choose Gemini)" value={settings.geminiModel} models={geminiChatModels(gem.models)} onChange={(m) => saveSettings({ geminiModel: m })} />
           {geminiTtsModels(gem.models).length > 0 && (
-            <ModelSelect label="Gemini voice model" value={settings.geminiTtsModel} models={geminiTtsModels(gem.models)} onChange={(m) => saveSettings({ geminiTtsModel: m })} />
+            <ModelSelect label="Gemini voice model (Flash-Lite = quicker replies, Flash = more expressive)" value={settings.geminiTtsModel} models={geminiTtsModels(gem.models)} onChange={(m) => saveSettings({ geminiTtsModel: m })} />
           )}
         </>
       )}
