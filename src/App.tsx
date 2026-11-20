@@ -37,17 +37,12 @@ export default function App() {
     const kind = rest[1] === 'placement' ? 'placement' : 'practice'
     const focusParam = route.query.get('focus')
     const focus = HINDI_SKILLS.some((s) => s.id === focusParam) ? focusParam : HINDI_SKILLS[0].id
-    // key forces a fresh conversation for every visit
-    return (
-      <Conversation
-        key={location.hash}
-        settings={settings}
-        lang={lang}
-        kind={kind}
-        focus={focus}
-        topic={route.query.get('topic') ?? 'surprise'}
-      />
-    )
+    const topic = route.query.get('topic') ?? 'surprise'
+    const resumeId = Number(route.query.get('s')) || undefined
+    // A new key = a new conversation. The saved-session id (?s=) is added to the address once the
+    // conversation exists, so it must not change the key — but opening a different saved one must.
+    const key = `${lang}/${kind}/${focus}/${topic}/${route.query.get('new') ?? ''}/${resumeId && route.query.get('resume') ? resumeId : ''}`
+    return <Conversation key={key} settings={settings} lang={lang} kind={kind} focus={focus} topic={topic} resumeId={resumeId} />
   }
   if (screen === 'recap') return <Recap id={Number(rest[0])} />
 

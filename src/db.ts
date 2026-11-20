@@ -53,6 +53,8 @@ export interface Session {
   turns: Turn[]
   skillsBefore?: Record<string, number>
   skillsAfter?: Record<string, number>
+  /** Placement chat has gathered enough answers to be scored. */
+  placementReady?: boolean
   recap?: Recap | null
   placement?: PlacementResult | null
 }

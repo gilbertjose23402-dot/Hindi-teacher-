@@ -98,3 +98,12 @@ describe('Gemini resilience', () => {
     ])
   })
 })
+
+describe('Gemini main brain with Gemma downloaded', () => {
+  it('never starts loading the slow on-phone model by itself when Gemini fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('busy', { status: 503 })))
+    const withGemma = { ...s, localModel: 'gemma-4-E2B-it-q4f16_1-MLC', localModelReady: true }
+    // If it tried Gemma, the error would come from the on-phone loader instead.
+    await expect(generateJson(req, withGemma)).rejects.toThrow(/Gemini servers are busy/)
+  })
+})

@@ -7,7 +7,7 @@ import { TOPIC_BY_ID } from '../lib/prompts'
 import { go } from '../lib/router'
 import { SKILL_BY_ID } from '../lib/skills'
 import { NoSpeechError, speak, startAudioCapture, startListening, stopSpeaking, unlockAudio, type AudioCapture, type Listening } from '../lib/speech'
-import { getProfile, logPracticeTime, type Settings } from '../lib/store'
+import { closeOpenSessions, getProfile, logPracticeTime, type Settings } from '../lib/store'
 import { applyTurnEvidence, finishPlacement, finishPractice, isFastMode, runFastTurn, runTurn, translateLine, type TurnResult } from '../lib/tutor'
 
 type Phase = 'starting' | 'idle' | 'recording' | 'transcribing' | 'thinking' | 'speaking' | 'ending'
@@ -102,12 +102,15 @@ export default function Conversation({
   kind,
   focus,
   topic,
+  resumeId,
 }: {
   settings: Settings
   lang: Lang
   kind: 'placement' | 'practice'
   focus: string | null
   topic: string
+  /** Saved conversation to continue (after the screen was off / the app was closed). */
+  resumeId?: number
 }) {
   const [session, setSession] = useState<Session | null>(null)
   const sessionRef = useRef<Session | null>(null)
@@ -131,6 +134,20 @@ export default function Conversation({
   const [pendingUser, setPendingUser] = useState<string | null>(null)
   const settingsRef = useRef(settings)
   settingsRef.current = settings
+  /** "Use Gemma (slow)": this conversation switches to the on-phone brain and phone listening. */
+  const backupRef = useRef(false)
+  const [onBackup, setOnBackup] = useState(false)
+  const cfg = (): Settings => {
+    const s = settingsRef.current
+    if (!backupRef.current) return s
+    return { ...s, llmPrimary: s.builtinAiReady ? 'builtin' : 'local', sttEngine: 'browser' }
+  }
+  const backupAvailable = () => {
+    const s = settingsRef.current
+    return !backupRef.current && !isOnDevice(s.llmPrimary) && (s.localModelReady || s.builtinAiReady)
+  }
+  /** Active seconds already spent in this conversation before it was reopened. */
+  const [baseSeconds, setBaseSeconds] = useState(0)
   const started = useRef(false)
   const chatEnd = useRef<HTMLDivElement>(null)
   const brain = useBrainProgress()
@@ -154,7 +171,7 @@ export default function Conversation({
     let promise: Promise<string | undefined> | null = null
     return {
       start(text: string) {
-        if (!promise && settingsRef.current.autoSpeak) promise = speak(text, lang, settingsRef.current)
+        if (!promise && cfg().autoSpeak) promise = speak(text, lang, cfg())
       },
       get promise() {
         return promise
@@ -162,12 +179,29 @@ export default function Conversation({
     }
   }
 
-  const failTurn = (e: unknown, retry: () => void) => {
+  /**
+   * A turn failed. Offer Retry, and — if Gemini is the brain and Gemma is downloaded —
+   * "Use Gemma (slow)" for the rest of this conversation. `retryOnBackup` is null when
+   * the turn can't be redone on Gemma (a recording only Gemini could hear).
+   */
+  const failTurn = (e: unknown, retry: () => void, retryOnBackup: (() => void) | null) => {
     stopSpeaking()
     setEarly(null)
     setPendingUser(null)
     setPhase('idle')
-    setError({ msg: errMsg(e), retry })
+    const alt = backupAvailable()
+      ? {
+          label: settingsRef.current.builtinAiReady ? 'Use phone AI (slow)' : 'Use Gemma (slow)',
+          fn: () => {
+            backupRef.current = true
+            setOnBackup(true)
+            setError(null)
+            if (retryOnBackup) retryOnBackup()
+            else setNotice('Switched to Gemma on your phone for this chat. Please say that again — the first reply can take a minute or two while it loads.')
+          },
+        }
+      : undefined
+    setError({ msg: errMsg(e), retry, alt })
   }
 
   /** Save the finished turn, update skills, and let Rani finish speaking. */
@@ -176,7 +210,10 @@ export default function Conversation({
     await persist(next)
     await applyTurnEvidence(next, res.evidence)
     timer.touch()
-    if (res.placementComplete) setPlacementReady(true)
+    if (res.placementComplete) {
+      setPlacementReady(true)
+      if (next.id != null) await db.sessions.update(next.id, { placementReady: true })
+    }
     speaker.start(res.reply)
     if (speaker.promise) {
       setPhase('speaking')
@@ -195,14 +232,14 @@ export default function Conversation({
     const speaker = makeSpeaker()
     let res: TurnResult
     try {
-      res = await runTurn(sess, settingsRef.current, {
+      res = await runTurn(sess, cfg(), {
         onReply: (reply) => {
           setEarly(reply)
           speaker.start(reply)
         },
       })
     } catch (e) {
-      return failTurn(e, () => void raniTurn(sess))
+      return failTurn(e, () => void raniTurn(sess), () => void raniTurn(sess))
     }
     const base = sessionRef.current ?? sess
     const turns = [...base.turns]
@@ -223,7 +260,7 @@ export default function Conversation({
     const speaker = makeSpeaker()
     let res: TurnResult & { transcript: string }
     try {
-      res = await runFastTurn(sess, wav, settingsRef.current, {
+      res = await runFastTurn(sess, wav, cfg(), {
         onTranscript: (t) => setPendingUser(t),
         onReply: (reply) => {
           setEarly(reply)
@@ -231,7 +268,7 @@ export default function Conversation({
         },
       })
     } catch (e) {
-      return failTurn(e, () => void fastTurn(wav))
+      return failTurn(e, () => void fastTurn(wav), null)
     }
     setPendingUser(null)
     if (!res.transcript) {
@@ -253,7 +290,7 @@ export default function Conversation({
     if (!t || (t.english && t.roman) || translating != null) return
     setTranslating(i)
     try {
-      const tr = await translateLine(t.text, settingsRef.current)
+      const tr = await translateLine(t.text, cfg())
       const cur = sessionRef.current!
       const turns = [...cur.turns]
       turns[i] = { ...turns[i], english: turns[i].english || tr.english, roman: turns[i].roman || tr.roman }
@@ -272,11 +309,31 @@ export default function Conversation({
     await raniTurn(next)
   }
 
-  // Create the session and let Rani open the conversation.
+  // Continue a saved conversation, or create a new one and let Rani open it.
   useEffect(() => {
     if (started.current) return
     started.current = true
     void (async () => {
+      if (resumeId) {
+        const saved = await db.sessions.get(resumeId)
+        if (saved?.endedAt) return go(`/recap/${saved.id}`, true)
+        if (saved) {
+          sessionRef.current = saved
+          setSession(saved)
+          setBaseSeconds(saved.activeSeconds ?? 0)
+          if (saved.placementReady) setPlacementReady(true)
+          const last = saved.turns.at(-1)
+          setNotice('Welcome back — carrying on where you left off.')
+          if (!last || last.role === 'user') {
+            // Closed before Rani answered — answer now.
+            await raniTurn(saved)
+          } else {
+            setPhase('idle')
+          }
+          return
+        }
+      }
+      await closeOpenSessions()
       const profile = await getProfile(lang)
       const base: Session = {
         lang,
@@ -292,6 +349,11 @@ export default function Conversation({
       const sess = { ...base, id }
       sessionRef.current = sess
       setSession(sess)
+      // Put the conversation's id in the address, so reopening the app continues it.
+      const [path, query = ''] = location.hash.split('?')
+      const q = new URLSearchParams(query)
+      q.set('s', String(id))
+      location.replace(`${path}?${q.toString()}`)
       await raniTurn(sess)
     })()
     return () => {
@@ -351,8 +413,8 @@ export default function Conversation({
     setError(null)
     setNotice(null)
     try {
-      fastRef.current = isFastMode(settingsRef.current)
-      listenRef.current = fastRef.current ? await startAudioCapture() : await startListening(settingsRef.current, lang)
+      fastRef.current = isFastMode(cfg())
+      listenRef.current = fastRef.current ? await startAudioCapture() : await startListening(cfg(), lang)
       setPhase('recording')
     } catch (e) {
       setPhase('idle')
@@ -416,12 +478,13 @@ export default function Conversation({
   const learnerCount = turns.filter((t) => t.role === 'user').length
   const fast = isFastMode(settings)
   const subtitle =
-    (fast ? '⚡ ' : '') +
+    (onBackup ? (settings.builtinAiReady ? 'Phone AI · ' : 'Gemma · ') : fast ? '⚡ ' : '') +
     (kind === 'placement'
       ? `Placement chat · ${learnerCount}/~12 answers`
       : `${SKILL_BY_ID[focus ?? '']?.name ?? 'Free talk'} · ${TOPIC_BY_ID[topic]?.label ?? ''}`)
-  const mins = Math.floor(timer.seconds / 60)
-  const secs = String(timer.seconds % 60).padStart(2, '0')
+  const shownSeconds = baseSeconds + timer.seconds
+  const mins = Math.floor(shownSeconds / 60)
+  const secs = String(shownSeconds % 60).padStart(2, '0')
   const canEnd = phase === 'idle' || phase === 'speaking' || phase === 'recording'
   const endLabel = kind === 'placement' ? (placementReady || learnerCount >= 5 ? 'Finish' : 'Quit') : 'End'
 

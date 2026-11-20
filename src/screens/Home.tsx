@@ -5,12 +5,16 @@ import { hasLlm } from '../lib/llm'
 import { TOPICS } from '../lib/prompts'
 import { go } from '../lib/router'
 import { HINDI_SKILLS, LEVEL_LABEL, SKILL_BY_ID, levelFromScore, overallScore, pickFocus } from '../lib/skills'
+import { useUpdateReady } from '../lib/pwa'
 import { unlockAudio } from '../lib/speech'
-import { useProfile, useTimeEntries, type Settings } from '../lib/store'
+import { db } from '../db'
+import { lastActivity, useProfile, useResumableSession, useTimeEntries, type Settings } from '../lib/store'
 
 export default function Home({ settings }: { settings: Settings }) {
   const profile = useProfile('hi')
   const time = useTimeEntries()
+  const resumable = useResumableSession('hi')
+  const update = useUpdateReady()
   const [focus, setFocus] = useState<string>('')
   const [topic, setTopic] = useState('surprise')
 
@@ -43,10 +47,54 @@ export default function Home({ settings }: { settings: Settings }) {
         </div>
       </header>
 
+      {update && (
+        <div className="banner info">
+          <span>A new version of Rani is ready.</span>
+          <button type="button" className="btn small primary" onClick={update}>
+            Update
+          </button>
+        </div>
+      )}
+
       {!hasLlm(settings) && (
         <button type="button" className="banner warn" onClick={() => go('/settings')}>
           Set up Rani's brain in Settings (one-time download, no account) to start talking.
         </button>
+      )}
+
+      {resumable && (
+        <section className="card continue-card">
+          <div>
+            <h2>Continue your conversation</h2>
+            <p className="muted">
+              {resumable.kind === 'placement' ? 'Placement chat' : (SKILL_BY_ID[resumable.focus ?? '']?.name ?? 'Conversation')} ·{' '}
+              {resumable.turns.filter((t) => t.role === 'user').length} answers · last at{' '}
+              {new Date(lastActivity(resumable)).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}
+            </p>
+          </div>
+          <div className="button-row">
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() => {
+                unlockAudio()
+                go(`/talk/${resumable.lang}/${resumable.kind}?focus=${resumable.focus ?? ''}&topic=${resumable.topic}&s=${resumable.id}&resume=1`)
+              }}
+            >
+              <Icon name="mic" /> Continue
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={async () => {
+                await db.sessions.update(resumable.id!, { endedAt: lastActivity(resumable) })
+                if (resumable.kind === 'practice') go(`/recap/${resumable.id}`)
+              }}
+            >
+              End it
+            </button>
+          </div>
+        </section>
       )}
 
       <section className="card today">
@@ -81,7 +129,7 @@ export default function Home({ settings }: { settings: Settings }) {
             <p>Start with a relaxed ~10 minute chat. Rani will find your level and the grammar points to work on.</p>
             <button type="button" className="btn primary big" disabled={!hasLlm(settings)} onClick={() => {
                 unlockAudio()
-                go('/talk/hi/placement')
+                go(`/talk/hi/placement?new=${Date.now()}`)
               }}>
               <Icon name="mic" /> Start placement chat
             </button>
@@ -119,7 +167,7 @@ export default function Home({ settings }: { settings: Settings }) {
               disabled={!hasLlm(settings)}
               onClick={() => {
                 unlockAudio()
-                go(`/talk/hi/practice?focus=${focus}&topic=${topic}`)
+                go(`/talk/hi/practice?focus=${focus}&topic=${topic}&new=${Date.now()}`)
               }}
             >
               <Icon name="mic" /> Talk with Rani

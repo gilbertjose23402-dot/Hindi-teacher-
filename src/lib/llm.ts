@@ -286,7 +286,10 @@ export async function generateJson<T>(source: JsonRequestSource, s: Settings, op
   const all: LlmProvider[] = ['builtin', 'local', 'gemini', 'groq']
   const first: LlmProvider[] = opts.preferCloud ? ['gemini', 'groq', s.llmPrimary] : [s.llmPrimary]
   const order = [...first, ...all.filter((p) => !first.includes(p))]
-  const usable = order.filter((p) => providerAvailable(s, p))
+  // With a cloud brain, never fall back to an on-phone model by itself: loading it takes
+  // minutes. The conversation offers "Use Gemma (slow)" instead.
+  const cloudPrimary = !isOnDevice(s.llmPrimary)
+  const usable = order.filter((p) => providerAvailable(s, p) && !(cloudPrimary && isOnDevice(p) && p !== s.llmPrimary))
   if (usable.length === 0) throw new ApiError('none', "Rani's brain isn't set up yet. Download it in Settings → Rani's brain (or add a Gemini key).")
   let lastErr: unknown
   for (const p of usable) {

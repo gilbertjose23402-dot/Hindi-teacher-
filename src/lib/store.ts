@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db, type Lang } from '../db'
+import { db, type Lang, type Session } from '../db'
 import { dayKey } from './dates'
 import { defaultSkills, type SkillState } from './skills'
 
@@ -168,8 +168,35 @@ export function useTimeEntries() {
  * Sessions closed without "End" (app killed, back gesture…) are marked ended
  * so history stays tidy. Their time and skill evidence were already saved.
  */
+/** An unfinished conversation can be continued for this long after its last message. */
+export const RESUME_WINDOW_MS = 6 * 60 * 60 * 1000
+
+export function lastActivity(s: Session): number {
+  return s.turns.at(-1)?.at ?? s.startedAt
+}
+
+/** The most recent conversation that was interrupted (screen off, app closed…) and can be continued. */
+export async function findResumableSession(lang?: Lang): Promise<Session | undefined> {
+  const cutoff = Date.now() - RESUME_WINDOW_MS
+  const open = await db.sessions.filter((s) => !s.endedAt && (!lang || s.lang === lang) && lastActivity(s) > cutoff && s.turns.length > 0).toArray()
+  return open.sort((a, b) => lastActivity(b) - lastActivity(a))[0]
+}
+
+export function useResumableSession(lang?: Lang): Session | undefined | null {
+  return useLiveQuery(async () => (await findResumableSession(lang)) ?? null, [lang])
+}
+
+/** Close every other unfinished conversation (when a new one starts). */
+export async function closeOpenSessions(exceptId?: number): Promise<void> {
+  const open = await db.sessions.filter((s) => !s.endedAt && s.id !== exceptId).toArray()
+  for (const s of open) {
+    if (s.turns.filter((t) => t.role === 'user').length === 0) await db.sessions.delete(s.id!)
+    else await db.sessions.update(s.id!, { endedAt: lastActivity(s) })
+  }
+}
+
 export async function closeStaleSessions(): Promise<void> {
-  const cutoff = Date.now() - 30 * 60 * 1000
+  const cutoff = Date.now() - RESUME_WINDOW_MS
   const open = await db.sessions.filter((s) => !s.endedAt).toArray()
   for (const s of open) {
     const lastAt = s.turns.at(-1)?.at ?? s.startedAt

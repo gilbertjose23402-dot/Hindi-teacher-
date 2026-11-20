@@ -57,6 +57,15 @@ With a Gemini key, **Settings → Rani's brain → ⚡ Use Gemini for everything
 
 Typical delay from the end of your sentence to Rani's voice: about 2–3 s (depends on your connection).
 
+### Interruptions and backups
+
+- **Conversations survive interruptions.** Turning the screen off, switching apps or Android closing Rani doesn't lose
+  the chat: reopening continues the same conversation (no new greeting). Home shows **Continue your conversation** for
+  up to 6 hours.
+- **Updates never reload a chat.** A new version waits; Home offers **Update**, or it applies on the next full restart.
+- **Gemini busy?** Rani retries, then tries backup Gemini models. If all are busy she says so and offers
+  **Use Gemma (slow)** — the on-phone model is never loaded by itself mid-conversation (loading takes minutes).
+
 ## Setup on your phone
 
 1. Open the app link in **Chrome on Android**: `https://gilbertjose23402-dot.github.io/Hindi-teacher-/`

@@ -123,7 +123,7 @@ export default function Progress({ settings }: { settings: Settings }) {
                     {st && st.correct + st.wrong > 0 ? `${st.correct} right · ${st.wrong} to fix` : 'Not practised yet'}
                   </small>
                   {profile.placementDone && (
-                    <button type="button" className="link-btn" onClick={() => go(`/talk/hi/practice?focus=${s.id}&topic=surprise`)}>
+                    <button type="button" className="link-btn" onClick={() => go(`/talk/hi/practice?focus=${s.id}&topic=surprise&new=${Date.now()}`)}>
                       Practise
                     </button>
                   )}
@@ -175,7 +175,7 @@ export default function Progress({ settings }: { settings: Settings }) {
             await updateProfile('hi', (p) => {
               p.placementDone = false
             })
-            go('/talk/hi/placement')
+            go(`/talk/hi/placement?new=${Date.now()}`)
           }}
         >
           Retake placement chat

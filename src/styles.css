@@ -1246,3 +1246,11 @@ details.optional[open] summary {
 .bubble.user.pending {
   opacity: 0.6;
 }
+
+.continue-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
