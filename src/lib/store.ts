@@ -38,6 +38,10 @@ export interface Settings {
   autoSpeak: boolean
   showRomanDefault: boolean
   dailyGoalMin: number
+  /** Manual override: open the law & AI conversation topics before reaching level B1. */
+  unlockTracks: boolean
+  /** Manual override: open every Marathi unit without finishing the previous one. */
+  unlockAllUnits: boolean
   settingsVersion: number
 }
 
@@ -71,6 +75,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoSpeak: true,
   showRomanDefault: false,
   dailyGoalMin: 15,
+  unlockTracks: false,
+  unlockAllUnits: false,
   settingsVersion: SETTINGS_VERSION,
 }
 
@@ -86,13 +92,22 @@ export interface Profile {
   tutorNotes: string
   history: { at: number; summary: string; focus: string | null }[]
   lastFocus?: string | null
+  /** Marathi lessons: progress per unit id. */
+  units?: Record<string, UnitProgress>
+}
+
+export interface UnitProgress {
+  completed: boolean
+  bestScore: number
+  attempts: number
+  lastAt: number
 }
 
 export function defaultProfile(lang: Lang): Profile {
   return {
     lang,
     placementDone: false,
-    skills: defaultSkills(),
+    skills: defaultSkills(lang),
     strengths: [],
     weaknesses: [],
     tutorNotes: '',

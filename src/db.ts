@@ -27,6 +27,8 @@ export interface Turn {
 }
 
 export interface Recap {
+  /** Lessons only: how well the learner used the unit's phrases and grammar (0–100). */
+  mastery?: number
   summary: string
   wins: string[]
   mistakes: { wrong: string; right: string; rule: string; skill?: string }[]
@@ -44,8 +46,11 @@ export interface PlacementResult {
 export interface Session {
   id?: number
   lang: Lang
-  kind: 'placement' | 'practice'
+  /** practice = free conversation (topic may be a law/AI role-play); lesson = a Marathi unit. */
+  kind: 'placement' | 'practice' | 'lesson'
   topic: string
+  /** Lessons: which unit (see content/marathi.ts). */
+  unitId?: string
   focus: string | null
   startedAt: number
   endedAt?: number
@@ -76,6 +81,9 @@ export interface Card {
   note?: string
   skill?: string
   sessionId?: number
+  /** Where the card came from: a mistake in a conversation, a lesson's key phrases, or the legal vocabulary deck. */
+  deck?: 'mistakes' | 'lesson' | 'legal'
+  unitId?: string
   createdAt: number
   due: number
   interval: number

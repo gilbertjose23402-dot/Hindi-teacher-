@@ -117,3 +117,25 @@ describe('model picking', () => {
     expect(pickGroqChatModel(['whisper-large-v3', 'some-new-model'])).toBe('some-new-model')
   })
 })
+
+describe('Marathi skills', () => {
+  it('has its own catalogue with mr_ ids and a beginner starting score', async () => {
+    const { MARATHI_SKILLS, SKILL_BY_ID, START_SCORE, defaultSkills, skillIdsFor } = await import('./skills')
+    expect(MARATHI_SKILLS.every((s) => s.id.startsWith('mr_'))).toBe(true)
+    expect(skillIdsFor('mr')).toContain('mr_past_tr')
+    expect(SKILL_BY_ID.mr_case_endings.name).toMatch(/Case endings/)
+    const mr = defaultSkills('mr')
+    expect(Object.keys(mr)).toEqual(skillIdsFor('mr'))
+    expect(mr.mr_be.score).toBe(START_SCORE.mr)
+    expect(Object.keys(defaultSkills())).toEqual(skillIdsFor('hi'))
+  })
+  it('levels and focus work per language', async () => {
+    const { defaultSkills, overallScore, pickFocus, levelFromScore } = await import('./skills')
+    const mr = defaultSkills('mr')
+    expect(levelFromScore(overallScore(mr, 'mr'))).toBe('A1')
+    mr.mr_case_endings.score = 2
+    expect(pickFocus(mr, null, 'mr')).toBe('mr_case_endings')
+    // A2 skills are not picked for an A1 beginner before A1/A2 ones that are weaker
+    expect(pickFocus(defaultSkills('mr'), null, 'mr').startsWith('mr_')).toBe(true)
+  })
+})

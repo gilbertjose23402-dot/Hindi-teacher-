@@ -1,3 +1,5 @@
+import type { Lang } from '../db'
+
 export type Level = 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
 export const LEVELS: Level[] = ['A1', 'A2', 'B1', 'B2', 'C1']
 
@@ -56,7 +58,47 @@ export const HINDI_SKILLS: SkillDef[] = [
     description: 'Passive with जाना and causatives (-वाना) — common in legal and formal Hindi.' },
 ]
 
-export const SKILL_BY_ID: Record<string, SkillDef> = Object.fromEntries(HINDI_SKILLS.map((s) => [s.id, s]))
+/** Marathi grammar skills for an absolute beginner, in teaching order. Ids start with mr_. */
+export const MARATHI_SKILLS: SkillDef[] = [
+  { id: 'mr_be', name: 'आहे — "to be"', example: 'मी वकील आहे, तुम्ही कुठे आहात?', minLevel: 'A1',
+    description: 'Forms of आहे with each pronoun: मी आहे, तू आहेस, तो/ती आहे, आम्ही आहोत, तुम्ही आहात, ते आहेत.' },
+  { id: 'mr_gender', name: 'Three genders & agreement', example: 'माझा भाऊ, माझी बहीण, माझं घर', minLevel: 'A1',
+    description: 'Masculine, feminine and NEUTER nouns; possessives, adjectives and verbs agree with them (माझा/माझी/माझं/माझे).' },
+  { id: 'mr_present', name: 'Present tense', example: 'मी काम करतो/करते, ते करतात', minLevel: 'A1',
+    description: 'One-word present tense with person and gender endings (करतो, करते, करतोस, करता, करतात) — no separate आहे.' },
+  { id: 'mr_questions', name: 'Questions', example: 'कुठे? कधी? तुम्ही वकील आहात का?', minLevel: 'A1',
+    description: 'Question words (काय, कुठे, कधी, का, कोण, किती, कसा) and yes/no questions with का at the END.' },
+  { id: 'mr_case_endings', name: 'Case endings (-त, -ला, -वर…)', example: 'कोर्टात, पुण्याला, टेबलावर, घरातून', minLevel: 'A1',
+    description: 'Endings attached to the noun (-त in, -ला to, -वर on, -तून from, -साठी for, -बरोबर with) and the stem changes before them.' },
+  { id: 'mr_possession', name: 'Having (-कडे) & possessives', example: 'माझ्याकडे गाडी आहे, तुमचं नाव', minLevel: 'A1',
+    description: '"I have" with माझ्याकडे/तुमच्याकडे and possessive forms agreeing with the possessed noun.' },
+  { id: 'mr_dative', name: 'मला… (like, want, know)', example: 'मला चहा आवडतो, मला पाणी हवं आहे', minLevel: 'A2',
+    description: 'Dative subject (मला, तुम्हाला, त्याला…) with आवडणे, हवा/हवी/हवं, पाहिजे, माहीत असणे; the verb agrees with the thing.' },
+  { id: 'mr_time', name: 'Time & daily routine', example: 'सकाळी सात वाजता, किती वाजले?', minLevel: 'A1',
+    description: 'Numbers, X वाजता (at X o\'clock) and time-of-day words सकाळी, दुपारी, संध्याकाळी, रात्री.' },
+  { id: 'mr_past_intr', name: 'Past tense: गेलो / गेले', example: 'मी काल कोर्टात गेलो/गेले', minLevel: 'A2',
+    description: 'Past tense of intransitive verbs agreeing with the subject (गेलो, गेले, गेलास, गेला, गेली, गेलात).' },
+  { id: 'mr_past_tr', name: 'Past tense: केलं (like ने)', example: 'मी काम केलं, त्याने फाईल वाचली', minLevel: 'A2',
+    description: 'Transitive past agreeing with the OBJECT, like Hindi ने; त्याने/तिने/त्यांनी in the 3rd person, -स/-त endings for तू/तुम्ही.' },
+  { id: 'mr_future', name: 'Future tense', example: 'मी उद्या येईन, तुम्ही कधी याल?', minLevel: 'A2',
+    description: 'Future endings (-ईन, -शील, -ईल, -ऊ, -आल, -तील) — not gendered, unlike Hindi.' },
+  { id: 'mr_requests', name: 'Polite requests', example: 'बसा, या, मला मदत कराल का?', minLevel: 'A1',
+    description: 'Polite imperatives (stem + आ: बसा, सांगा, द्या) and polite questions with …ाल का?' },
+  { id: 'mr_vocab', name: 'Marathi words (not Hindi)', example: 'कुठे not कहाँ, आहे not है, खूप not बहुत', minLevel: 'A1',
+    description: 'Using the Marathi word instead of slipping into Hindi (कुठे/कहाँ, काय/क्या, खूप/बहुत, आता/अभी, पण/लेकिन).' },
+]
+
+export const SKILLS: Record<Lang, SkillDef[]> = { hi: HINDI_SKILLS, mr: MARATHI_SKILLS }
+
+export function skillsFor(lang: Lang): SkillDef[] {
+  return SKILLS[lang]
+}
+
+export function skillIdsFor(lang: Lang): string[] {
+  return SKILLS[lang].map((s) => s.id)
+}
+
+export const SKILL_BY_ID: Record<string, SkillDef> = Object.fromEntries([...HINDI_SKILLS, ...MARATHI_SKILLS].map((s) => [s.id, s]))
 
 export interface SkillState {
   score: number
@@ -67,8 +109,11 @@ export interface SkillState {
 
 export const DEFAULT_SKILL_SCORE = 35
 
-export function defaultSkills(): Record<string, SkillState> {
-  return Object.fromEntries(HINDI_SKILLS.map((s) => [s.id, { score: DEFAULT_SKILL_SCORE, correct: 0, wrong: 0 }]))
+/** Starting score per language: Hindi is set properly by the placement chat; Marathi starts from zero knowledge. */
+export const START_SCORE: Record<Lang, number> = { hi: DEFAULT_SKILL_SCORE, mr: 10 }
+
+export function defaultSkills(lang: Lang = 'hi'): Record<string, SkillState> {
+  return Object.fromEntries(SKILLS[lang].map((s) => [s.id, { score: START_SCORE[lang], correct: 0, wrong: 0 }]))
 }
 
 export function clampScore(n: number): number {
@@ -92,8 +137,8 @@ export function applyEvidence(state: SkillState, correct: boolean, now = Date.no
   }
 }
 
-export function overallScore(skills: Record<string, SkillState>): number {
-  const vals = HINDI_SKILLS.map((s) => skills[s.id]?.score ?? DEFAULT_SKILL_SCORE)
+export function overallScore(skills: Record<string, SkillState>, lang: Lang = 'hi'): number {
+  const vals = SKILLS[lang].map((s) => skills[s.id]?.score ?? START_SCORE[lang])
   return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length)
 }
 
@@ -110,13 +155,15 @@ export function levelFromScore(score: number): Level {
  * appropriate for the learner's level, avoiding repeating the last focus
  * unless it is clearly the weakest.
  */
-export function pickFocus(skills: Record<string, SkillState>, lastFocus?: string | null): string {
-  const level = levelFromScore(overallScore(skills))
+export function pickFocus(skills: Record<string, SkillState>, lastFocus?: string | null, lang: Lang = 'hi'): string {
+  const level = levelFromScore(overallScore(skills, lang))
   const maxIdx = LEVELS.indexOf(level) + 1
-  const candidates = HINDI_SKILLS.filter((s) => LEVELS.indexOf(s.minLevel) <= maxIdx)
-    .map((s) => ({ id: s.id, score: skills[s.id]?.score ?? DEFAULT_SKILL_SCORE, last: skills[s.id]?.last ?? 0 }))
+  const catalogue = SKILLS[lang]
+  const candidates = catalogue
+    .filter((s) => LEVELS.indexOf(s.minLevel) <= maxIdx)
+    .map((s) => ({ id: s.id, score: skills[s.id]?.score ?? START_SCORE[lang], last: skills[s.id]?.last ?? 0 }))
     .sort((a, b) => a.score - b.score || a.last - b.last)
-  if (candidates.length === 0) return HINDI_SKILLS[0].id
+  if (candidates.length === 0) return catalogue[0].id
   const [first, second] = candidates
   if (first.id === lastFocus && second && second.score - first.score <= 10) return second.id
   return first.id

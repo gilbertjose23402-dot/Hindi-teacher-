@@ -3,12 +3,13 @@ import { Icon, Spinner } from '../components/ui'
 import { db, type Correction, type Lang, type Session, type Turn } from '../db'
 import { isOnDevice } from '../lib/llm'
 import { useBrainProgress } from '../lib/local'
+import { UNIT_BY_ID } from '../content/marathi'
 import { TOPIC_BY_ID } from '../lib/prompts'
 import { go } from '../lib/router'
 import { SKILL_BY_ID } from '../lib/skills'
 import { NoSpeechError, speak, startAudioCapture, startListening, stopSpeaking, unlockAudio, type AudioCapture, type Listening } from '../lib/speech'
 import { closeOpenSessions, getProfile, logPracticeTime, type Settings } from '../lib/store'
-import { applyTurnEvidence, finishPlacement, finishPractice, isFastMode, runFastTurn, runTurn, translateLine, type TurnResult } from '../lib/tutor'
+import { applyTurnEvidence, finishSession, isFastMode, runFastTurn, runTurn, translateLine, type TurnResult } from '../lib/tutor'
 
 type Phase = 'starting' | 'idle' | 'recording' | 'transcribing' | 'thinking' | 'speaking' | 'ending'
 
@@ -102,13 +103,16 @@ export default function Conversation({
   kind,
   focus,
   topic,
+  unitId,
   resumeId,
 }: {
   settings: Settings
   lang: Lang
-  kind: 'placement' | 'practice'
+  kind: 'placement' | 'practice' | 'lesson'
   focus: string | null
   topic: string
+  /** Lessons: which Marathi unit. */
+  unitId?: string
   /** Saved conversation to continue (after the screen was off / the app was closed). */
   resumeId?: number
 }) {
@@ -340,6 +344,7 @@ export default function Conversation({
         kind,
         topic,
         focus: kind === 'practice' ? focus : null,
+        ...(kind === 'lesson' ? { unitId } : {}),
         startedAt: Date.now(),
         activeSeconds: 0,
         turns: [],
@@ -455,19 +460,23 @@ export default function Conversation({
       await db.sessions.update(sess.id, { endedAt: Date.now() })
       return go('/', true)
     }
+    if (sess.kind === 'lesson' && !placementReady && learnerTurns < 3) {
+      if (!confirm('Leave this lesson? It’s too short to score — you can start it again any time.')) return
+      await db.sessions.update(sess.id, { endedAt: Date.now() })
+      return go(`/lesson/${sess.unitId ?? 'u1'}`, true)
+    }
     setPhase('ending')
     setError(null)
     await db.sessions.update(sess.id, { endedAt: Date.now() })
     try {
-      if (sess.kind === 'placement') await finishPlacement(sess.id)
-      else await finishPractice(sess.id)
+      await finishSession(sess)
       go(`/recap/${sess.id}`, true)
     } catch (e) {
       setPhase('idle')
       setError({
         msg: `Couldn't create the recap: ${errMsg(e)}`,
         retry: () => void endSession(),
-        alt: sess.kind === 'practice' ? { label: 'Skip recap', fn: () => go(`/recap/${sess.id}`, true) } : undefined,
+        alt: sess.kind !== 'placement' ? { label: 'Skip recap', fn: () => go(`/recap/${sess.id}`, true) } : undefined,
       })
     }
   }
@@ -477,16 +486,28 @@ export default function Conversation({
   const turns = session?.turns ?? []
   const learnerCount = turns.filter((t) => t.role === 'user').length
   const fast = isFastMode(settings)
+  const unit = unitId ? UNIT_BY_ID[unitId] : undefined
   const subtitle =
     (onBackup ? (settings.builtinAiReady ? 'Phone AI · ' : 'Gemma · ') : fast ? '⚡ ' : '') +
     (kind === 'placement'
       ? `Placement chat · ${learnerCount}/~12 answers`
-      : `${SKILL_BY_ID[focus ?? '']?.name ?? 'Free talk'} · ${TOPIC_BY_ID[topic]?.label ?? ''}`)
+      : kind === 'lesson'
+        ? `Unit ${unit?.no ?? ''} ${unit?.titleMr ?? ''} · ${learnerCount}/~8`
+        : `${TOPIC_BY_ID[topic]?.role ? '🎭 ' : ''}${TOPIC_BY_ID[topic]?.label ?? ''} · ${SKILL_BY_ID[focus ?? '']?.name ?? 'Free talk'}`)
   const shownSeconds = baseSeconds + timer.seconds
   const mins = Math.floor(shownSeconds / 60)
   const secs = String(shownSeconds % 60).padStart(2, '0')
   const canEnd = phase === 'idle' || phase === 'speaking' || phase === 'recording'
-  const endLabel = kind === 'placement' ? (placementReady || learnerCount >= 5 ? 'Finish' : 'Quit') : 'End'
+  const endLabel =
+    kind === 'placement'
+      ? placementReady || learnerCount >= 5
+        ? 'Finish'
+        : 'Quit'
+      : kind === 'lesson'
+        ? placementReady || learnerCount >= 3
+          ? 'Finish'
+          : 'Quit'
+        : 'End'
 
   return (
     <div
@@ -592,7 +613,7 @@ export default function Conversation({
         {notice && !error && <div className="banner info">{notice}</div>}
         {placementReady && phase !== 'ending' && (
           <button type="button" className="btn primary big" onClick={() => void endSession()}>
-            See my results
+            {kind === 'lesson' ? 'Finish the lesson' : 'See my results'}
           </button>
         )}
         {typing ? (
@@ -601,8 +622,8 @@ export default function Conversation({
               autoFocus
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder="हिंदी में लिखिए… (or Hinglish)"
-              lang="hi"
+              placeholder={lang === 'mr' ? 'मराठीत लिहा… (or English)' : 'हिंदी में लिखिए… (or Hinglish)'}
+              lang={lang}
               aria-label="Type your message"
             />
             <button type="submit" className="icon-btn primary" aria-label="Send" disabled={!draft.trim() || phase !== 'idle'}>
@@ -657,7 +678,7 @@ export default function Conversation({
       {phase === 'ending' && (
         <div className="overlay" role="status">
           <Spinner />
-          <p>{kind === 'placement' ? 'Rani is assessing your Hindi…' : 'Rani is preparing your recap…'}</p>
+          <p>{kind === 'placement' ? 'Rani is assessing your Hindi…' : kind === 'lesson' ? 'Rani is scoring your lesson…' : 'Rani is preparing your recap…'}</p>
           {isOnDevice(settings.llmPrimary) && <p className="hint">On the phone this can take a minute.</p>}
         </div>
       )}

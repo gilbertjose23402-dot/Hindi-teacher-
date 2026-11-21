@@ -67,6 +67,22 @@ export default function Settings({ settings }: { settings: S }) {
       </section>
 
       <section className="card stack">
+        <h2>Lessons & topics</h2>
+        <Toggle
+          checked={settings.unlockTracks}
+          onChange={(v) => saveSettings({ unlockTracks: v })}
+          label="Open courtroom & AI conversations now"
+          hint="Normally they open at Hindi level B1."
+        />
+        <Toggle
+          checked={settings.unlockAllUnits}
+          onChange={(v) => saveSettings({ unlockAllUnits: v })}
+          label="Open all Marathi units"
+          hint="Normally each unit opens when you finish the one before."
+        />
+      </section>
+
+      <section className="card stack">
         <h2>Rani's brain</h2>
         <div className="field">
           <span className="field-label">Main brain</span>
@@ -157,7 +173,7 @@ export default function Settings({ settings }: { settings: S }) {
         </button>
       </section>
 
-      <p className="hint center-text">Rani v{__APP_VERSION__} · milestone 1</p>
+      <p className="hint center-text">Rani v{__APP_VERSION__} · milestone 2</p>
     </div>
   )
 }

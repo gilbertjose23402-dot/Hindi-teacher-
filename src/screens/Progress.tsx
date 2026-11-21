@@ -1,11 +1,14 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useState } from 'react'
 import { Icon, ScoreBar } from '../components/ui'
-import { db, type TimeEntry } from '../db'
+import { MARATHI_UNITS, UNIT_BY_ID, unitsCompleted } from '../content/marathi'
+import { TOPIC_BY_ID } from '../content/topics'
+import { db, type Lang, type Session, type TimeEntry } from '../db'
 import { computeStreak, dayKey, formatMinutes, lastNDays, secondsByDay, shortDayName } from '../lib/dates'
+import { newTalkUrl } from '../lib/nav'
 import { go } from '../lib/router'
-import { HINDI_SKILLS, LEVEL_LABEL, SKILL_BY_ID, levelFromScore, overallScore } from '../lib/skills'
-import { updateProfile, useProfile, useTimeEntries, type Settings } from '../lib/store'
+import { HINDI_SKILLS, LEVEL_LABEL, SKILL_BY_ID, levelFromScore, overallScore, skillsFor } from '../lib/skills'
+import { updateProfile, useProfile, useTimeEntries, type Profile, type Settings } from '../lib/store'
 
 function WeekChart({ entries, goalMin }: { entries: TimeEntry[]; goalMin: number }) {
   const days = lastNDays(7)
@@ -48,12 +51,34 @@ function WeekChart({ entries, goalMin }: { entries: TimeEntry[]; goalMin: number
   )
 }
 
+function sessionTitle(s: Session): string {
+  if (s.kind === 'placement') return 'Hindi placement chat'
+  if (s.kind === 'lesson') {
+    const u = s.unitId ? UNIT_BY_ID[s.unitId] : undefined
+    return u ? `Marathi Unit ${u.no} · ${u.titleMr}` : 'Marathi lesson'
+  }
+  const topic = TOPIC_BY_ID[s.topic]
+  const what = topic && topic.id !== 'surprise' ? topic.label : (SKILL_BY_ID[s.focus ?? '']?.name ?? 'Conversation')
+  return `${s.lang === 'mr' ? 'Marathi' : 'Hindi'} · ${what}`
+}
+
 export default function Progress({ settings }: { settings: Settings }) {
+  const [tab, setTab] = useState<Lang>('hi')
   const profile = useProfile('hi')
+  const mrProfile = useProfile('mr')
   const time = useTimeEntries()
   const sessions = useLiveQuery(() => db.sessions.orderBy('startedAt').reverse().limit(40).toArray(), [])
-  const cardCount = useLiveQuery(() => db.cards.count(), [])
-  if (!profile || !time || !sessions) return null
+  const cards = useLiveQuery(async () => {
+    const all = await db.cards.toArray()
+    const now = Date.now()
+    return {
+      total: all.length,
+      due: all.filter((c) => c.due <= now).length,
+      learned: all.filter((c) => c.reps >= 2 && c.interval >= 7).length,
+      byDeck: { mistakes: all.filter((c) => (c.deck ?? 'mistakes') === 'mistakes').length, lesson: all.filter((c) => c.deck === 'lesson').length, legal: all.filter((c) => c.deck === 'legal').length },
+    }
+  }, [])
+  if (!profile || !mrProfile || !time || !sessions || !cards) return null
 
   const total = time.reduce((a, e) => a + e.seconds, 0)
   const byDay = secondsByDay(time)
@@ -96,6 +121,18 @@ export default function Progress({ settings }: { settings: Settings }) {
         <p className="hint">Only active conversation time counts. A day joins your streak after 5 minutes.</p>
       </section>
 
+      <div className="segmented" role="tablist" aria-label="Language">
+        {(['hi', 'mr'] as Lang[]).map((l) => (
+          <button key={l} type="button" role="tab" aria-selected={tab === l} className={tab === l ? 'on' : ''} onClick={() => setTab(l)}>
+            {l === 'hi' ? 'Hindi हिंदी' : 'Marathi मराठी'}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'mr' ? (
+        <MarathiProgress profile={mrProfile} />
+      ) : (
+      <>
       <section className="card">
         <div className="lang-head">
           <div>
@@ -123,7 +160,7 @@ export default function Progress({ settings }: { settings: Settings }) {
                     {st && st.correct + st.wrong > 0 ? `${st.correct} right · ${st.wrong} to fix` : 'Not practised yet'}
                   </small>
                   {profile.placementDone && (
-                    <button type="button" className="link-btn" onClick={() => go(`/talk/hi/practice?focus=${s.id}&topic=surprise&new=${Date.now()}`)}>
+                    <button type="button" className="link-btn" onClick={() => go(newTalkUrl('hi', 'practice', { focus: s.id, topic: 'surprise' }))}>
                       Practise
                     </button>
                   )}
@@ -132,7 +169,6 @@ export default function Progress({ settings }: { settings: Settings }) {
             )
           })}
         </ul>
-        <p className="hint">{cardCount ?? 0} flashcards collected from your sessions.</p>
       </section>
 
       {profile.tutorNotes && (
@@ -141,6 +177,34 @@ export default function Progress({ settings }: { settings: Settings }) {
           <p>{profile.tutorNotes}</p>
         </section>
       )}
+      </>
+      )}
+
+      <section className="card">
+        <h2>Flashcards</h2>
+        <div className="stats-row">
+          <div>
+            <strong>{cards.total}</strong>
+            <span>cards</span>
+          </div>
+          <div>
+            <strong>{cards.due}</strong>
+            <span>due now</span>
+          </div>
+          <div>
+            <strong>{cards.learned}</strong>
+            <span>well learned</span>
+          </div>
+        </div>
+        <p className="hint">
+          {cards.byDeck.mistakes} from your mistakes · {cards.byDeck.lesson} lesson phrases · {cards.byDeck.legal} legal terms
+        </p>
+        {cards.due > 0 && (
+          <button type="button" className="btn" onClick={() => go('/review')}>
+            Review {cards.due} due
+          </button>
+        )}
+      </section>
 
       <section className="card">
         <h2>Sessions</h2>
@@ -152,7 +216,7 @@ export default function Progress({ settings }: { settings: Settings }) {
               <li key={s.id}>
                 <button type="button" onClick={() => go(`/recap/${s.id}`)}>
                   <span>
-                    <strong>{s.kind === 'placement' ? 'Placement chat' : (SKILL_BY_ID[s.focus ?? '']?.name ?? 'Conversation')}</strong>
+                    <strong>{sessionTitle(s)}</strong>
                     <small className="muted">
                       {new Date(s.startedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })} ·{' '}
                       {formatMinutes(s.activeSeconds)}
@@ -166,7 +230,7 @@ export default function Progress({ settings }: { settings: Settings }) {
         )}
       </section>
 
-      {profile.placementDone && (
+      {tab === 'hi' && profile.placementDone && (
         <button
           type="button"
           className="btn ghost"
@@ -175,12 +239,82 @@ export default function Progress({ settings }: { settings: Settings }) {
             await updateProfile('hi', (p) => {
               p.placementDone = false
             })
-            go(`/talk/hi/placement?new=${Date.now()}`)
+            go(newTalkUrl('hi', 'placement'))
           }}
         >
           Retake placement chat
         </button>
       )}
     </div>
+  )
+}
+
+function MarathiProgress({ profile }: { profile: Profile }) {
+  const done = unitsCompleted(profile.units)
+  const skills = [...skillsFor('mr')].sort((a, b) => (profile.skills[a.id]?.score ?? 0) - (profile.skills[b.id]?.score ?? 0))
+  return (
+    <>
+      <section className="card">
+        <div className="lang-head">
+          <div>
+            <h2>Marathi lessons</h2>
+            <p className="muted">
+              {done} of {MARATHI_UNITS.length} units complete
+            </p>
+          </div>
+          <span className="badge">
+            {done}/{MARATHI_UNITS.length}
+          </span>
+        </div>
+        <ul className="skill-list">
+          {MARATHI_UNITS.map((u) => {
+            const p = profile.units?.[u.id]
+            return (
+              <li key={u.id}>
+                <div className="skill-row">
+                  <span>
+                    {p?.completed ? '✓ ' : ''}
+                    {u.no}. <span lang="mr">{u.titleMr}</span> <small className="muted">{u.title}</small>
+                  </span>
+                  <strong>{p ? p.bestScore : '–'}</strong>
+                </div>
+                {p && <ScoreBar score={p.bestScore} />}
+              </li>
+            )
+          })}
+        </ul>
+        <button type="button" className="btn" onClick={() => go('/marathi')}>
+          Open Marathi lessons
+        </button>
+      </section>
+
+      <section className="card">
+        <h2>Marathi grammar</h2>
+        <ul className="skill-list">
+          {skills.map((s) => {
+            const st = profile.skills[s.id]
+            return (
+              <li key={s.id}>
+                <div className="skill-row">
+                  <span>
+                    {s.name} <small className="muted" lang="mr">{s.example.split(',')[0]}</small>
+                  </span>
+                  <strong>{st?.score ?? '?'}</strong>
+                </div>
+                <ScoreBar score={st?.score ?? 0} />
+                <small className="muted">{st && st.correct + st.wrong > 0 ? `${st.correct} right · ${st.wrong} to fix` : 'Not practised yet'}</small>
+              </li>
+            )
+          })}
+        </ul>
+      </section>
+
+      {profile.tutorNotes && (
+        <section className="card">
+          <h2>What Rani remembers about your Marathi</h2>
+          <p>{profile.tutorNotes}</p>
+        </section>
+      )}
+    </>
   )
 }

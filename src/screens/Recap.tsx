@@ -4,8 +4,10 @@ import { Icon, ScoreBar, Spinner } from '../components/ui'
 import { db, type Session } from '../db'
 import { formatMinutes } from '../lib/dates'
 import { go } from '../lib/router'
-import { HINDI_SKILLS, LEVEL_LABEL, SKILL_BY_ID, levelFromScore } from '../lib/skills'
-import { finishPractice } from '../lib/tutor'
+import { MARATHI_UNITS, UNIT_BY_ID } from '../content/marathi'
+import { LEVEL_LABEL, SKILL_BY_ID, levelFromScore, skillsFor } from '../lib/skills'
+import { useProfile } from '../lib/store'
+import { UNIT_PASS, finishSession, recordUnitResult } from '../lib/tutor'
 
 export default function Recap({ id }: { id: number }) {
   const session = useLiveQuery(() => db.sessions.get(id), [id])
@@ -26,9 +28,18 @@ export default function Recap({ id }: { id: number }) {
         <button type="button" className="icon-btn" aria-label="Back" onClick={() => history.length > 1 ? history.back() : go('/')}>
           <Icon name="back" />
         </button>
-        <h1>{session.kind === 'placement' ? 'Your Hindi level' : 'Session recap'}</h1>
+        <h1>{session.kind === 'placement' ? 'Your Hindi level' : session.kind === 'lesson' ? 'Lesson result' : 'Session recap'}</h1>
       </header>
-      {session.kind === 'placement' ? <PlacementReport session={session} /> : <PracticeRecap session={session} />}
+      {session.kind === 'placement' ? (
+        <PlacementReport session={session} />
+      ) : session.kind === 'lesson' ? (
+        <>
+          <LessonResult session={session} />
+          <PracticeRecap session={session} />
+        </>
+      ) : (
+        <PracticeRecap session={session} />
+      )}
       <Transcript session={session} />
     </div>
   )
@@ -103,7 +114,7 @@ function PracticeRecap({ session }: { session: Session }) {
   const r = session.recap
   const before = session.skillsBefore ?? {}
   const after = session.skillsAfter ?? {}
-  const changed = HINDI_SKILLS.filter((s) => before[s.id] != null && after[s.id] != null && before[s.id] !== after[s.id])
+  const changed = skillsFor(session.lang).filter((s) => before[s.id] != null && after[s.id] != null && before[s.id] !== after[s.id])
   const corrections = session.turns.filter((t) => t.correction).length
   const learnerTurns = session.turns.filter((t) => t.role === 'user').length
 
@@ -111,7 +122,7 @@ function PracticeRecap({ session }: { session: Session }) {
     setBusy(true)
     setErr('')
     try {
-      await finishPractice(session.id!)
+      await finishSession(session)
     } catch (e) {
       setErr((e as Error).message)
     }
@@ -204,20 +215,76 @@ function PracticeRecap({ session }: { session: Session }) {
                 {r.patterns.map((p, i) => (
                   <li key={i}>
                     <span>{p.english}</span>
-                    <strong lang="hi">{p.target}</strong>
+                    <strong lang={session.lang}>{p.target}</strong>
                     {p.note && <small className="muted">{p.note}</small>}
                   </li>
                 ))}
               </ul>
-              <p className="hint">The review screen for these arrives in the next update.</p>
+              <button type="button" className="link-btn" onClick={() => go('/review')}>
+                Review them in the Review tab
+              </button>
             </section>
           )}
         </>
       )}
-      <button type="button" className="btn primary big" onClick={() => go('/', true)}>
-        Done
-      </button>
+      {session.kind !== 'lesson' && (
+        <button type="button" className="btn primary big" onClick={() => go('/', true)}>
+          Done
+        </button>
+      )}
     </div>
+  )
+}
+
+/** Lesson score, whether the unit is now complete, and where to go next. */
+function LessonResult({ session }: { session: Session }) {
+  const profile = useProfile('mr')
+  const unit = session.unitId ? UNIT_BY_ID[session.unitId] : undefined
+  if (!unit || !profile) return null
+  const mastery = session.recap?.mastery
+  const progress = profile.units?.[unit.id]
+  const complete = !!progress?.completed
+  const next = MARATHI_UNITS[unit.no] // unit.no is 1-based → index of the following unit
+  return (
+    <section className="card level-card lesson-result">
+      <span className={'badge huge' + (complete ? ' good' : '')}>{mastery ?? '–'}</span>
+      <div className="stack">
+        <div>
+          <h2 lang="mr">
+            Unit {unit.no}: {unit.titleMr}
+          </h2>
+          <p className={complete ? 'ok-text' : 'muted'}>
+            {mastery == null
+              ? 'Not scored yet.'
+              : complete
+                ? next
+                  ? `✓ Unit complete — Unit ${next.no} is open.`
+                  : '✓ Unit complete — you finished all Marathi units!'
+                : `Almost there — ${UNIT_PASS}+ opens the next unit.`}
+          </p>
+        </div>
+        <div className="button-row">
+          {complete && next ? (
+            <button type="button" className="btn primary" onClick={() => go(`/lesson/${next.id}`, true)}>
+              Next: Unit {next.no}
+            </button>
+          ) : (
+            <button type="button" className="btn primary" onClick={() => go(`/lesson/${unit.id}`, true)}>
+              Practise again
+            </button>
+          )}
+          <button type="button" className="btn ghost" onClick={() => go('/marathi', true)}>
+            All units
+          </button>
+        </div>
+        <p className="hint">The unit's {unit.phrases.length} key phrases are in your flashcards.</p>
+        {!complete && mastery != null && (
+          <button type="button" className="link-btn" onClick={() => void recordUnitResult(unit.id, mastery, true)}>
+            Mark as complete anyway
+          </button>
+        )}
+      </div>
+    </section>
   )
 }
 

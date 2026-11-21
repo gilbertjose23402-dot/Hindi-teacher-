@@ -1,28 +1,45 @@
 import { useEffect, useState } from 'react'
+import { TopicPicker } from '../components/TopicPicker'
 import { Icon, Ring, ScoreBar } from '../components/ui'
+import { MARATHI_UNITS, UNIT_BY_ID, nextUnit, unitsCompleted } from '../content/marathi'
+import { TOPIC_BY_ID, TRACK_UNLOCK_SCORE, type Track } from '../content/topics'
+import { db, type Session } from '../db'
 import { computeStreak, dayKey, formatMinutes, lastNDays, secondsByDay } from '../lib/dates'
 import { hasLlm } from '../lib/llm'
-import { TOPICS } from '../lib/prompts'
+import { newTalkUrl, resumeTalkUrl } from '../lib/nav'
+import { useUpdateReady } from '../lib/pwa'
 import { go } from '../lib/router'
 import { HINDI_SKILLS, LEVEL_LABEL, SKILL_BY_ID, levelFromScore, overallScore, pickFocus } from '../lib/skills'
-import { useUpdateReady } from '../lib/pwa'
 import { unlockAudio } from '../lib/speech'
-import { db } from '../db'
 import { lastActivity, useProfile, useResumableSession, useTimeEntries, type Settings } from '../lib/store'
+import { useDueCount } from './Review'
+
+function sessionLabel(s: Session): string {
+  if (s.kind === 'placement') return 'Placement chat'
+  if (s.kind === 'lesson') {
+    const u = s.unitId ? UNIT_BY_ID[s.unitId] : undefined
+    return u ? `Marathi Unit ${u.no} · ${u.titleMr}` : 'Marathi lesson'
+  }
+  const topic = TOPIC_BY_ID[s.topic]
+  return `${s.lang === 'mr' ? 'Marathi' : 'Hindi'} · ${topic?.label ?? SKILL_BY_ID[s.focus ?? '']?.name ?? 'Conversation'}`
+}
 
 export default function Home({ settings }: { settings: Settings }) {
   const profile = useProfile('hi')
+  const mrProfile = useProfile('mr')
   const time = useTimeEntries()
-  const resumable = useResumableSession('hi')
+  const resumable = useResumableSession()
   const update = useUpdateReady()
+  const due = useDueCount()
   const [focus, setFocus] = useState<string>('')
+  const [track, setTrack] = useState<Track>('general')
   const [topic, setTopic] = useState('surprise')
 
   useEffect(() => {
     if (profile && !focus) setFocus(pickFocus(profile.skills, profile.lastFocus))
   }, [profile, focus])
 
-  if (!profile || !time) return null
+  if (!profile || !mrProfile || !time) return null
 
   const byDay = secondsByDay(time)
   const today = byDay.get(dayKey()) ?? 0
@@ -32,6 +49,9 @@ export default function Home({ settings }: { settings: Settings }) {
   const overall = overallScore(profile.skills)
   const level = levelFromScore(overall)
   const focusDef = SKILL_BY_ID[focus] ?? HINDI_SKILLS[0]
+  const tracksOpen = settings.unlockTracks || (profile.placementDone && overall >= TRACK_UNLOCK_SCORE)
+  const mrDone = unitsCompleted(mrProfile.units)
+  const mrNext = nextUnit(mrProfile.units)
 
   return (
     <div className="screen">
@@ -67,8 +87,7 @@ export default function Home({ settings }: { settings: Settings }) {
           <div>
             <h2>Continue your conversation</h2>
             <p className="muted">
-              {resumable.kind === 'placement' ? 'Placement chat' : (SKILL_BY_ID[resumable.focus ?? '']?.name ?? 'Conversation')} ·{' '}
-              {resumable.turns.filter((t) => t.role === 'user').length} answers · last at{' '}
+              {sessionLabel(resumable)} · {resumable.turns.filter((t) => t.role === 'user').length} answers · last at{' '}
               {new Date(lastActivity(resumable)).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit' })}
             </p>
           </div>
@@ -78,7 +97,7 @@ export default function Home({ settings }: { settings: Settings }) {
               className="btn primary"
               onClick={() => {
                 unlockAudio()
-                go(`/talk/${resumable.lang}/${resumable.kind}?focus=${resumable.focus ?? ''}&topic=${resumable.topic}&s=${resumable.id}&resume=1`)
+                go(resumeTalkUrl(resumable))
               }}
             >
               <Icon name="mic" /> Continue
@@ -88,7 +107,7 @@ export default function Home({ settings }: { settings: Settings }) {
               className="btn ghost"
               onClick={async () => {
                 await db.sessions.update(resumable.id!, { endedAt: lastActivity(resumable) })
-                if (resumable.kind === 'practice') go(`/recap/${resumable.id}`)
+                if (resumable.kind !== 'placement') go(`/recap/${resumable.id}`)
               }}
             >
               End it
@@ -105,6 +124,19 @@ export default function Home({ settings }: { settings: Settings }) {
           <p className="muted">This week: {formatMinutes(week)}</p>
         </div>
       </section>
+
+      {due > 0 && (
+        <button type="button" className="card review-card" onClick={() => go('/review')}>
+          <Icon name="cards" />
+          <span>
+            <strong>
+              {due} flashcard{due === 1 ? '' : 's'} due
+            </strong>
+            <small className="muted">About {Math.max(1, Math.round(due / 4))} min · your mistakes, lesson phrases and legal terms</small>
+          </span>
+          <Icon name="back" size={16} />
+        </button>
+      )}
 
       <section className="card lang-card">
         <div className="lang-head">
@@ -129,7 +161,7 @@ export default function Home({ settings }: { settings: Settings }) {
             <p>Start with a relaxed ~10 minute chat. Rani will find your level and the grammar points to work on.</p>
             <button type="button" className="btn primary big" disabled={!hasLlm(settings)} onClick={() => {
                 unlockAudio()
-                go(`/talk/hi/placement?new=${Date.now()}`)
+                go(newTalkUrl('hi', 'placement'))
               }}>
               <Icon name="mic" /> Start placement chat
             </button>
@@ -151,23 +183,22 @@ export default function Home({ settings }: { settings: Settings }) {
                 {focusDef.example}
               </p>
             </div>
-            <div className="field">
-              <span className="field-label">Topic</span>
-              <div className="chips">
-                {TOPICS.map((t) => (
-                  <button key={t.id} type="button" className={'chip' + (topic === t.id ? ' on' : '')} onClick={() => setTopic(t.id)}>
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            <TopicPicker
+              lang="hi"
+              track={track}
+              topic={topic}
+              onTrack={setTrack}
+              onTopic={setTopic}
+              unlocked={{ general: true, law: tracksOpen, ai: tracksOpen }}
+              lockedHint={`Courtroom and AI conversations open at level B1 (grammar ${TRACK_UNLOCK_SCORE}+; you're at ${overall}). You can open them now in Settings.`}
+            />
             <button
               type="button"
               className="btn primary big"
               disabled={!hasLlm(settings)}
               onClick={() => {
                 unlockAudio()
-                go(`/talk/hi/practice?focus=${focus}&topic=${topic}&new=${Date.now()}`)
+                go(newTalkUrl('hi', 'practice', { focus, topic: tracksOpen || track === 'general' ? topic : 'surprise' }))
               }}
             >
               <Icon name="mic" /> Talk with Rani
@@ -176,16 +207,25 @@ export default function Home({ settings }: { settings: Settings }) {
         )}
       </section>
 
-      <section className="card lang-card disabled-card">
+      <section className="card lang-card">
         <div className="lang-head">
           <div>
             <h2>
               Marathi <span lang="mr">मराठी</span>
             </h2>
-            <p className="muted">Structured beginner lessons — arriving in the next update</p>
+            <p className="muted">
+              {mrDone === 0 ? 'From zero, one short unit at a time' : `${mrDone} of ${MARATHI_UNITS.length} units done`}
+            </p>
           </div>
-          <Icon name="lock" />
+          {mrDone > 0 && <span className="badge">{mrDone}/{MARATHI_UNITS.length}</span>}
         </div>
+        {mrDone > 0 && <ScoreBar score={Math.round((mrDone / MARATHI_UNITS.length) * 100)} />}
+        <button type="button" className="btn primary big" onClick={() => go(`/lesson/${mrNext.id}`)}>
+          <Icon name="book" /> {mrDone === 0 ? 'Start' : 'Continue with'} Unit {mrNext.no}: <span lang="mr">{mrNext.titleMr}</span>
+        </button>
+        <button type="button" className="btn ghost" onClick={() => go('/marathi')}>
+          All units & free talk
+        </button>
       </section>
     </div>
   )

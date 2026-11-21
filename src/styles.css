@@ -1254,3 +1254,246 @@ details.optional[open] summary {
   border-color: var(--primary);
   background: var(--primary-soft);
 }
+
+/* ---------- Review ---------- */
+.tab-icon {
+  position: relative;
+  display: inline-flex;
+}
+.badge-dot {
+  position: absolute;
+  top: -6px;
+  right: -12px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+}
+.tabbar button {
+  min-width: 64px;
+  padding: 6px 10px;
+}
+.flashcard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.flash-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.tag-soft {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--primary);
+  background: var(--primary-soft);
+  border-radius: 6px;
+  padding: 2px 8px;
+}
+.flash-front {
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.flash-back {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--good-bg);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.flash-back p {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--good);
+  font-family: 'Noto Sans Devanagari', system-ui, sans-serif;
+}
+.said {
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  padding: 8px 12px;
+}
+.said p {
+  font-size: 1.1rem;
+}
+.said.ok {
+  border-color: var(--good);
+}
+.grade-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+.btn.grade {
+  flex-direction: column;
+  gap: 0;
+  padding: 8px 4px;
+  min-height: 56px;
+}
+.btn.grade small {
+  font-weight: 400;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.btn.grade.again strong {
+  color: var(--bad);
+}
+.btn.grade.good strong {
+  color: var(--good);
+}
+.btn.grade.easy strong {
+  color: var(--primary);
+}
+.delete-card {
+  align-self: flex-end;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.badge.good {
+  background: var(--good);
+  color: #fff;
+}
+.lesson-result {
+  align-items: flex-start;
+}
+
+.review-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-color: var(--accent);
+}
+.review-card > svg:first-child {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.review-card > svg:last-child {
+  transform: rotate(180deg);
+  color: var(--muted);
+  margin-left: auto;
+}
+.review-card span {
+  display: flex;
+  flex-direction: column;
+}
+.locked-hint {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.locked-hint svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.unit-list {
+  list-style: none;
+  padding: 0;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.unit-row {
+  appearance: none;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.unit-row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.unit-row.next {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.unit-no {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.unit-no.done {
+  background: var(--good);
+  color: #fff;
+}
+.unit-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.unit-status {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.phrase-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.phrase-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 10px;
+}
+.phrase-list li:last-child {
+  border-bottom: none;
+}
+.phrase-main {
+  flex: 1;
+}
+.phrase-mr {
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.phrase-en {
+  font-size: 0.92rem;
+}
+.phrase-hi {
+  font-size: 0.85rem;
+}
+.grammar-points {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bridge {
+  font-size: 0.92rem;
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 8px 10px;
+}

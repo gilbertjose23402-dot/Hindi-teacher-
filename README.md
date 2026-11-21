@@ -1,23 +1,39 @@
 # Rani — Hindi & Marathi conversation tutor
 
-A phone app (installable PWA) you talk to every day to improve your Hindi grammar — and, from the next milestone, learn Marathi from zero.
-Rani listens, replies in natural spoken Hindi, quietly corrects your sentences, remembers your progress and tracks your practice time.
+A phone app (installable PWA) you talk to every day to improve your Hindi grammar and learn Marathi from zero.
+Rani listens, replies in natural spoken Hindi or Marathi, quietly corrects your sentences, remembers your progress and tracks your practice time.
 
-## What's in milestone 1
+## Hindi (milestone 1)
 
 - **Placement chat** (~10 min): Rani assesses 17 Hindi grammar skills and your listening, then gives you a level (A1–C1) and a skills map.
 - **Daily conversation**: pick a topic; Rani steers the conversation towards your weakest grammar point (or one you choose).
 - **Corrections without interruptions**: Rani keeps talking and recasts the right form; under each of your messages a card shows
   what you said → the correct sentence (with audio), a one-line rule in English and, when useful, a comparison with Malayalam.
 - **Memory**: per-skill scores update after every message; after each session Rani writes a recap, updates her notes about you,
-  and saves the sentence patterns you got wrong as flashcards (review screen arrives in milestone 2).
+  and saves the sentence patterns you got wrong as flashcards.
 - **Time tracker**: counts only *active* conversation time (pauses over 90 s don't count). Daily goal ring, streak, 7-day chart, all-time total.
 - **Listening mode** (eye icon) hides Rani's text so you practise listening; tap **Aa** for romanisation and **EN** for translation.
 - Type instead of talking (keyboard icon), Hinglish welcome.
 - Everything is stored **only on your phone** (IndexedDB). Download/restore a backup file from Settings.
 
-Coming in milestone 2: Marathi mode (structured beginner lessons → conversation), flashcard review, courtroom/criminal-law
-and AI conversation tracks (unlock at level B1).
+## Milestone 2: Marathi, flashcards, law & AI
+
+- **Marathi from zero — 14 units** (greetings → "to be" → present tense → questions → case endings → having → likes/wants →
+  time → past tenses (incl. the ने-like construction) → future → requests → getting around Pune → at the court).
+  Each unit: key phrases in *your* forms (masculine/feminine) with audio, transliteration, English and the Hindi equivalent;
+  a short grammar note comparing with Hindi (and Malayalam where it helps); then a ~8-answer lesson conversation with Rani.
+  A lesson score of 50+ opens the next unit (or "Mark as complete anyway"; or open all units in Settings).
+  The phrases are hand-written and checked by tests (no Hindi slips like है/हूँ/क्या in Marathi phrases).
+- **Marathi free conversation** after 6 units, and **court Marathi role-plays** (clerk, client, police) after Unit 14.
+- **Flashcard review (Review tab)** — spaced repetition (Again / Hard / Good / Easy) for your mistakes, lesson phrases and an
+  optional **legal vocabulary deck** (28 criminal-court terms in Hindi and Marathi, five new terms a day). Say the answer aloud
+  and Rani checks it.
+- **Courtroom & law track (Hindi)** — role-plays: bail hearing (Rani as the Sessions Judge), client interview, police station,
+  cross-examination, explaining procedure to a family member, legal news. Rani stays in character while the correction card
+  keeps correcting you, uses proper terms (BNS/BNSS/BSA names) and never invents section numbers or citations.
+- **AI track (Hindi)** — AI in daily life, AI & the legal profession, deepfakes as evidence, explaining AI to a senior.
+- Law & AI open automatically at Hindi level B1 (grammar 45+), or now via Settings → Lessons & topics.
+- **Progress** has Hindi and Marathi tabs (units, skills, notes) plus flashcard stats.
 
 ## How it works — no account needed
 
@@ -92,12 +108,15 @@ npm run build    # production build into dist/
 
 Code map:
 
-- `src/lib/prompts.ts` — Rani's persona, correction rules, placement plan, JSON schemas
-- `src/lib/tutor.ts` — turn handling, recap, placement assessment, memory updates
-- `src/lib/skills.ts` — the Hindi grammar skill catalogue, scoring and focus selection
+- `src/content/marathi.ts` — the 14 Marathi units (phrases, grammar notes, scenarios)
+- `src/content/legal.ts`, `src/content/topics.ts` — legal vocabulary deck; conversation topics, law/AI role-plays, unlock rules
+- `src/lib/prompts.ts` — Rani's persona, correction rules (Hindi/Marathi), placement, lessons, role-plays, JSON schemas
+- `src/lib/tutor.ts` — turn handling (all kinds, fast mode), recaps, placement assessment, lesson scoring, memory, cards
+- `src/lib/skills.ts` — Hindi and Marathi grammar skill catalogues, scoring and focus selection
+- `src/lib/srs.ts` — spaced-repetition scheduling for flashcards
 - `src/lib/builtin.ts` — the phone's built-in AI through Chrome (Prompt API / Gemini Nano), when available
 - `src/lib/local.ts`, `src/lib/brain.worker.ts` — on-phone AI (WebLLM): model choice, download, KV-cache-friendly prompting
 - `src/lib/llm.ts` — brain routing and fallback, Gemini/Groq calls, model discovery, transcription, Gemini speech
 - `src/lib/speech.ts` — recording, speech recognition routing, Gemini voice playback with phone-voice fallback
 - `src/lib/store.ts`, `src/db.ts` — settings, learner profile, time log (IndexedDB via Dexie)
-- `src/screens/*` — Onboarding, Home, Conversation, Recap, Progress, Settings
+- `src/screens/*` — Onboarding, Home, Conversation, Recap, Review, Marathi, Lesson, Progress, Settings
